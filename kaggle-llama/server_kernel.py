@@ -1,23 +1,34 @@
-# Runs INSIDE a Kaggle GPU session. Builds llama.cpp, serves a Qwen GGUF model
-# through an OpenAI-compatible API, exposes it via a Cloudflare quick tunnel,
-# and listens for a kill switch. __SECRET__ is substituted by launch.sh.
-import os, re, signal, subprocess, sys, threading, time, urllib.request
+# Runs INSIDE a Kaggle 2x T4 session. Builds llama.cpp, serves a GGUF of the
+# requested model through an OpenAI-compatible API behind a Cloudflare quick
+# tunnel, reports links via ntfy, and listens for a kill switch.
+# __PLACEHOLDERS__ are substituted by launch.sh.
+import json, os, re, signal, subprocess, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 SECRET = "__SECRET__"
-HF_REPO = "Qwen/Qwen3-8B-GGUF"
-HF_FILE = "Qwen3-8B-Q4_K_M.gguf"
-CTX = 32768
+NTFY_TOPIC = "__NTFY_TOPIC__"
+MODEL_REPO = "__MODEL_REPO__"
+QUANT = "__QUANT__"
+CTX = int("__CTX__")
 MAX_RUNTIME_MIN = int("__MAX_RUNTIME_MIN__")  # dead-man switch: hard stop
+ALIAS = MODEL_REPO.split("/")[-1].lower()
 LLAMA_PORT, KILL_PORT = 8080, 8081
 procs = []
+
+def notify(msg):
+    print(f"[notify] {msg}", flush=True)
+    try:
+        urllib.request.urlopen(urllib.request.Request(
+            f"https://ntfy.sh/{NTFY_TOPIC}", data=msg.encode(), method="POST"), timeout=10)
+    except Exception as e:
+        print(f"[notify] failed: {e}", flush=True)
 
 def sh(cmd):
     print("+", cmd, flush=True)
     subprocess.run(cmd, shell=True, check=True)
 
-def shutdown(reason):
-    print(f"[kill-switch] shutting down: {reason}", flush=True)
+def shutdown(reason, error=False):
+    notify(f"{'ERROR' if error else 'STOPPED'} {reason}")
     for p in procs:
         try: p.terminate()
         except Exception: pass
@@ -25,13 +36,13 @@ def shutdown(reason):
     for p in procs:
         try: p.kill()
         except Exception: pass
-    os._exit(0)  # ends the Kaggle run, which releases the GPU session
+    os._exit(1 if error else 0)  # ends the Kaggle run, which releases the GPUs
 
 class KillHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/shutdown" and self.headers.get("X-Kill-Secret") == SECRET:
             self.send_response(200); self.end_headers(); self.wfile.write(b"bye\n")
-            threading.Thread(target=shutdown, args=("remote request",)).start()
+            threading.Thread(target=shutdown, args=("kill switch",)).start()
         else:
             self.send_response(403); self.end_headers()
     def log_message(self, *a): pass
@@ -47,39 +58,72 @@ def tunnel(port):
             return m.group(0)
     raise RuntimeError("cloudflared exited without a URL")
 
+def find_gguf():
+    """Return (repo, [files]) for the requested quant; never substitutes another model."""
+    from huggingface_hub import list_repo_files
+    name = MODEL_REPO.split("/")[-1]
+    for repo in (f"{MODEL_REPO}-GGUF", f"unsloth/{name}-GGUF", MODEL_REPO):
+        try:
+            files = list_repo_files(repo)
+        except Exception as e:
+            print(f"[model] {repo}: {type(e).__name__}", flush=True)
+            continue
+        hits = sorted(f for f in files if f.endswith(".gguf") and QUANT.lower() in f.lower()
+                      and "mmproj" not in f.lower())
+        if hits:
+            # Split GGUFs (-00001-of-0000N) need every shard; llama-server loads from the first.
+            return repo, hits
+        print(f"[model] {repo}: no {QUANT} .gguf among {len(files)} files", flush=True)
+    return None, []
+
 def main():
     deadline = time.time() + MAX_RUNTIME_MIN * 60
     threading.Thread(target=lambda: (time.sleep(max(0, deadline - time.time())),
                                      shutdown(f"max runtime {MAX_RUNTIME_MIN} min reached")), daemon=True).start()
-    # Kill switch is up before the slow build so it works at any point.
+    # Kill switch is up before the slow steps so it works at any point.
     threading.Thread(target=HTTPServer(("127.0.0.1", KILL_PORT), KillHandler).serve_forever, daemon=True).start()
     sh("curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 && chmod +x cloudflared")
-    kill_url = tunnel(KILL_PORT)
-    print(f"KILL_URL={kill_url}", flush=True)
+    notify(f"KILL_URL {tunnel(KILL_PORT)}")
+
+    sh("pip install -q -U huggingface_hub")
+    repo, files = find_gguf()
+    if not repo:
+        shutdown(f"no-gguf: no {QUANT} GGUF found for {MODEL_REPO}", error=True)
+    notify(f"MODEL {repo} {files[0]}")
 
     sh("nvidia-smi")
     sh("git clone --depth 1 https://github.com/ggml-org/llama.cpp")
-    sh("cmake -S llama.cpp -B llama.cpp/build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES='60;75' -DLLAMA_CURL=OFF")
+    sh("cmake -S llama.cpp -B llama.cpp/build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75 -DLLAMA_CURL=OFF")
     sh("cmake --build llama.cpp/build --target llama-server -j$(nproc)")
-    sh("pip install -q huggingface_hub")
-    from huggingface_hub import hf_hub_download
-    model = hf_hub_download(HF_REPO, HF_FILE)
 
-    server = subprocess.Popen(["llama.cpp/build/bin/llama-server", "-m", model, "--host", "127.0.0.1",
-                               "--port", str(LLAMA_PORT), "-ngl", "99", "-c", str(CTX), "--jinja",
-                               "--api-key", SECRET, "--alias", "qwen3-8b"])
+    from huggingface_hub import hf_hub_download
+    paths = [hf_hub_download(repo, f) for f in files]
+
+    server = subprocess.Popen(["llama.cpp/build/bin/llama-server", "-m", paths[0],
+                               "--host", "127.0.0.1", "--port", str(LLAMA_PORT),
+                               "-ngl", "99", "--split-mode", "layer", "--tensor-split", "1,1",
+                               "-c", str(CTX), "--jinja", "--api-key", SECRET, "--alias", ALIAS],
+                              stderr=subprocess.PIPE, text=True)
     procs.append(server)
-    for _ in range(600):
+    tail = []
+    threading.Thread(target=lambda: [tail.append(l) or tail.__delitem__(slice(0, -40)) or print(l, end="", flush=True)
+                                     for l in server.stderr], daemon=True).start()
+    for _ in range(900):
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{LLAMA_PORT}/health", timeout=2); break
         except Exception:
-            if server.poll() is not None: shutdown("llama-server crashed")
+            if server.poll() is not None:
+                time.sleep(1)
+                shutdown("llama-server crashed: " + "".join(tail[-8:])[-1500:], error=True)
             time.sleep(2)
-    print(f"LLM_URL={tunnel(LLAMA_PORT)}/v1", flush=True)
-    print("READY", flush=True)
+    notify(f"LLM_URL {tunnel(LLAMA_PORT)}/v1")
+    notify(f"READY {ALIAS}")
     server.wait()
-    shutdown("llama-server exited")
+    shutdown("llama-server exited", error=True)
 
 if __name__ == "__main__":
     signal.signal(signal.SIGTERM, lambda *a: shutdown("SIGTERM"))
-    main()
+    try:
+        main()
+    except Exception as e:
+        shutdown(f"{type(e).__name__}: {e}"[:1500], error=True)

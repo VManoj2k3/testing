@@ -25,7 +25,10 @@ def notify(msg):
 
 def sh(cmd):
     print("+", cmd, flush=True)
-    subprocess.run(cmd, shell=True, check=True)
+    r = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    print(r.stdout, flush=True)
+    if r.returncode:
+        raise RuntimeError(f"`{cmd[:80]}` exit {r.returncode}: ...{r.stdout[-1200:]}")
 
 def shutdown(reason, error=False):
     notify(f"{'ERROR' if error else 'STOPPED'} {reason}")
@@ -48,7 +51,7 @@ class KillHandler(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 
 def tunnel(port):
-    p = subprocess.Popen(["./cloudflared", "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}"],
+    p = subprocess.Popen(["/tmp/cloudflared", "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}"],
                          stderr=subprocess.PIPE, text=True)
     procs.append(p)
     for line in p.stderr:
@@ -82,7 +85,7 @@ def main():
                                      shutdown(f"max runtime {MAX_RUNTIME_MIN} min reached")), daemon=True).start()
     # Kill switch is up before the slow steps so it works at any point.
     threading.Thread(target=HTTPServer(("127.0.0.1", KILL_PORT), KillHandler).serve_forever, daemon=True).start()
-    sh("curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 && chmod +x cloudflared")
+    sh("curl -fsSL -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 && chmod +x /tmp/cloudflared")
     notify(f"KILL_URL {tunnel(KILL_PORT)}")
 
     sh("pip install -q -U huggingface_hub")
@@ -92,14 +95,21 @@ def main():
     notify(f"MODEL {repo} {files[0]}")
 
     sh("nvidia-smi")
-    sh("git clone --depth 1 https://github.com/ggml-org/llama.cpp")
-    sh("cmake -S llama.cpp -B llama.cpp/build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75 -DLLAMA_CURL=OFF")
-    sh("cmake --build llama.cpp/build --target llama-server -j$(nproc)")
+    nvcc = next((p for p in ["/usr/local/cuda/bin/nvcc", *sorted(__import__("glob").glob("/usr/local/cuda-*/bin/nvcc"))]
+                 if os.path.exists(p)), None)
+    if not nvcc:
+        shutdown("nvcc not found under /usr/local/cuda*", error=True)
+    os.environ["CUDACXX"] = nvcc
+    os.environ["PATH"] = os.path.dirname(nvcc) + ":" + os.environ["PATH"]
+    sh("rm -rf /tmp/llama.cpp && git clone --depth 1 https://github.com/ggml-org/llama.cpp /tmp/llama.cpp")
+    sh(f"cmake -S /tmp/llama.cpp -B /tmp/llama.cpp/build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75 "
+       f"-DCMAKE_CUDA_COMPILER={nvcc} -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF")
+    sh("cmake --build /tmp/llama.cpp/build --target llama-server -j$(nproc)")
 
     from huggingface_hub import hf_hub_download
     paths = [hf_hub_download(repo, f) for f in files]
 
-    server = subprocess.Popen(["llama.cpp/build/bin/llama-server", "-m", paths[0],
+    server = subprocess.Popen(["/tmp/llama.cpp/build/bin/llama-server", "-m", paths[0],
                                "--host", "127.0.0.1", "--port", str(LLAMA_PORT),
                                "-ngl", "99", "--split-mode", "layer", "--tensor-split", "1,1",
                                "-c", str(CTX), "--jinja", "--api-key", SECRET, "--alias", ALIAS],

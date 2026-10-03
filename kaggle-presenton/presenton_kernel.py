@@ -94,6 +94,19 @@ def main():
 
     env = {**os.environ, **APP_ENV, "PRESENTON_PUBLIC_URL": app_url,
            "PATH": "/opt/venv/bin:" + os.environ["PATH"]}
+    # start.js only writes provider env into userConfig.json when CAN_CHANGE_KEYS is true,
+    # but the web UI reads "configured" from that file (and FastAPI imports it into its DB
+    # once, on first start). Seed it ourselves with Presenton's own builder, before start.
+    seed = subprocess.run(
+        ["node", "-e",
+         'const u=require("/app/scripts/user-config-env.cjs"),fs=require("fs"),'
+         'p=process.env.APP_DATA_DIRECTORY+"/userConfig.json";let e={};'
+         'try{e=JSON.parse(fs.readFileSync(p,"utf8"))}catch{}'
+         'fs.writeFileSync(p,JSON.stringify(u.buildUserConfigFromEnv(e,process.env),null,2));'
+         'console.log(Object.keys(JSON.parse(fs.readFileSync(p,"utf8"))).sort().join(","))'],
+        env=env, capture_output=True, text=True)
+    if seed.returncode or "CUSTOM_MODEL" not in seed.stdout:
+        shutdown(f"seeding userConfig failed: {seed.stdout[-300:]} {seed.stderr[-600:]}", error=True)
     log = open("/tmp/presenton.log", "w")
     app = subprocess.Popen(["node", "/app/start.js"], cwd="/app", env=env, stdout=log, stderr=subprocess.STDOUT)
     procs.append(app)

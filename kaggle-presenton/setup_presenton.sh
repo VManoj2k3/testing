@@ -75,7 +75,8 @@ test -f /app/presentation-export/node_modules/@presenton/export-core/dist/index.
 step "assemble /app"
 cp -r "$SRC/servers/fastapi/." /app/servers/fastapi/
 cp -r "$SRC/servers/nextjs/.next-build/standalone/." /app/servers/nextjs/
-cp -r "$SRC/servers/nextjs/public" /app/servers/nextjs/public
+# Merge: the standalone output already has a partial public/, so a plain cp -r would nest it.
+mkdir -p /app/servers/nextjs/public && cp -r "$SRC/servers/nextjs/public/." /app/servers/nextjs/public/
 mkdir -p /app/servers/nextjs/.next-build && cp -r "$SRC/servers/nextjs/.next-build/static" /app/servers/nextjs/.next-build/static
 cp -r "$SRC/templates" /app/templates
 cp "$SRC/start.js" "$SRC/LICENSE" "$SRC/NOTICE" /app/

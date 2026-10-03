@@ -66,8 +66,11 @@ cp "$SRC/electron/resources/document-extraction/liteparse_runner.mjs" /app/docum
 cp "$SRC/package.json" /app/
 cp "$SRC/scripts/sync-presentation-export.cjs" "$SRC/scripts/run-presentation-export.mjs" \
    "$SRC/scripts/presenton-terminal-banner.mjs" "$SRC/scripts/user-config-env.cjs" /app/scripts/
-(cd /app && node scripts/sync-presentation-export.cjs --force)
+# The sync finishes its work but can hang on exit with an idle keep-alive socket,
+# so bound it and judge success by the files it installs, not its exit code.
+(cd /app && timeout 600 node scripts/sync-presentation-export.cjs --force) || echo "sync exited $? (checking files)"
 test -f /app/presentation-export/runner.mjs
+test -f /app/presentation-export/node_modules/@presenton/export-core/dist/index.js
 
 step "assemble /app"
 cp -r "$SRC/servers/fastapi/." /app/servers/fastapi/

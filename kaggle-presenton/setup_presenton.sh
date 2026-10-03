@@ -26,6 +26,20 @@ if [ ! -x /usr/bin/google-chrome ]; then
   apt-get install -y -qq /tmp/chrome.deb >/dev/null
 fi
 
+step "patch: DISABLE_THINKING for llama-server"
+# Presenton sends top-level `enable_thinking: false` for LLM=custom, which llama-server
+# ignores (measured: Qwen still reasoned). llama-server reads chat_template_kwargs.
+python3 - "$SRC/servers/fastapi/utils/llm_config.py" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+old = '        extra_body["enable_thinking"] = False\n'
+new = old + '        extra_body["chat_template_kwargs"] = {"enable_thinking": False}\n'
+if new not in s:
+    assert s.count(old) == 1, "upstream changed; patch needs updating"
+    open(p, "w").write(s.replace(old, new))
+PY
+grep -n 'chat_template_kwargs' "$SRC/servers/fastapi/utils/llm_config.py"
+
 step "python venv + fastapi deps"
 command -v uv >/dev/null || python3 -m pip install -q uv
 uv venv -q --python 3.11 /opt/venv
@@ -39,7 +53,10 @@ uv pip install -q --python /opt/venv/bin/python \
 
 step "nextjs build"
 cd "$SRC/servers/nextjs"
-NEXT_TELEMETRY_DISABLED=1 npm ci --no-audit --no-fund --loglevel=error
+# Cypress (e2e tests) and Puppeteer's bundled Chrome are not needed at runtime; skip
+# their large downloads (Chrome comes from the deb above).
+CYPRESS_INSTALL_BINARY=0 PUPPETEER_SKIP_DOWNLOAD=1 NEXT_TELEMETRY_DISABLED=1 \
+  npm ci --no-audit --no-fund --loglevel=error
 NEXT_TELEMETRY_DISABLED=1 npm run build >/tmp/presenton-next-build.log 2>&1 || { tail -40 /tmp/presenton-next-build.log; exit 1; }
 
 step "export + document-extraction assets"

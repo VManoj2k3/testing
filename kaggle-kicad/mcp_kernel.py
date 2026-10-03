@@ -87,8 +87,11 @@ def main():
     notify("KICAD " + sh("kicad-cli version").strip().splitlines()[-1])
 
     # System python owns the pcbnew bindings; the venv sees them via system site-packages.
-    sh("/usr/bin/python3 -m venv --system-site-packages /tmp/kvenv && "
-       "/tmp/kvenv/bin/pip install -q -U pip && /tmp/kvenv/bin/pip install -q mcp-server-kicad uvicorn")
+    # ensurepip is broken for the system python on Kaggle, so bootstrap pip by hand.
+    notify("PY " + sh("/usr/bin/python3 -V; dpkg -L python3-pcbnew 2>/dev/null | grep -m1 'pcbnew.py$' || true").strip().replace("\n", " | "))
+    sh("/usr/bin/python3 -m venv --without-pip --system-site-packages /tmp/kvenv && "
+       "curl -fsSL https://bootstrap.pypa.io/get-pip.py | /tmp/kvenv/bin/python - -q && "
+       "/tmp/kvenv/bin/python -m pip install -q mcp-server-kicad uvicorn")
     try:
         sh("/tmp/kvenv/bin/python -c 'import pcbnew; print(\"pcbnew\", pcbnew.Version())'")
         notify("PCBNEW ok")

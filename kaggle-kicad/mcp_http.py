@@ -7,6 +7,7 @@ Env: MCP_TOKEN (required), PORT (default 8090), MCP_CWD (KiCad project dir).
 import hmac
 import json
 import os
+from urllib.parse import parse_qs
 
 import uvicorn
 from mcp.server.transport_security import TransportSecuritySettings
@@ -19,15 +20,26 @@ TOKEN = os.environ["MCP_TOKEN"]
 
 
 class BearerAuth:
-    """Reject HTTP requests without the token; CORS preflight passes through."""
+    """Reject HTTP requests without the token; CORS preflight passes through.
+
+    The token is accepted as `Authorization: Bearer <token>` or as `?key=<token>`
+    in the URL, for clients that only take a URL. Unauthenticated OAuth discovery
+    (/.well-known/...) gets 404 so clients don't start a login flow that doesn't exist.
+    """
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http" and scope["method"] != "OPTIONS":
+            if scope["path"].startswith("/.well-known/"):
+                await send({"type": "http.response.start", "status": 404, "headers": []})
+                await send({"type": "http.response.body", "body": b""})
+                return
             got = dict(scope["headers"]).get(b"authorization", b"").decode()
-            if not hmac.compare_digest(got, f"Bearer {TOKEN}"):
+            query = parse_qs(scope.get("query_string", b"").decode())
+            url_key = (query.get("key") or [""])[0]
+            if not (hmac.compare_digest(got, f"Bearer {TOKEN}") or hmac.compare_digest(url_key, TOKEN)):
                 body = json.dumps({"error": "missing or invalid bearer token"}).encode()
                 await send({"type": "http.response.start", "status": 401,
                             "headers": [(b"content-type", b"application/json")]})

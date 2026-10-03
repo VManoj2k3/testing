@@ -108,7 +108,7 @@ def main():
        "[ -n \"$L\" ] && ln -sf \"$L\" /tmp/cudalib/libcuda.so; ls -l /tmp/cudalib " + cuda_root + "/lib64/stubs || true")
     sh(f"cmake -S /tmp/llama.cpp -B /tmp/llama.cpp/build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75 "
        f"-DCMAKE_CUDA_COMPILER={nvcc} -DCMAKE_LIBRARY_PATH='/tmp/cudalib;{cuda_root}/lib64/stubs' "
-       f"-DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF")
+       f"-DGGML_CUDA_NO_VMM=ON -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF")
     sh("cmake --build /tmp/llama.cpp/build --target llama-server -j$(nproc)")
 
     from huggingface_hub import hf_hub_download

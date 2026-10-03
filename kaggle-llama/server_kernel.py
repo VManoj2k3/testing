@@ -102,8 +102,13 @@ def main():
     os.environ["CUDACXX"] = nvcc
     os.environ["PATH"] = os.path.dirname(nvcc) + ":" + os.environ["PATH"]
     sh("rm -rf /tmp/llama.cpp && git clone --depth 1 https://github.com/ggml-org/llama.cpp /tmp/llama.cpp")
+    # Kaggle ships the driver as libcuda.so.1 only; CMake's FindCUDAToolkit wants libcuda.so.
+    cuda_root = os.path.dirname(os.path.dirname(nvcc))
+    sh("mkdir -p /tmp/cudalib && L=$(ldconfig -p | grep -o '/.*libcuda\\.so\\.1$' | head -1); "
+       "[ -n \"$L\" ] && ln -sf \"$L\" /tmp/cudalib/libcuda.so; ls -l /tmp/cudalib " + cuda_root + "/lib64/stubs || true")
     sh(f"cmake -S /tmp/llama.cpp -B /tmp/llama.cpp/build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75 "
-       f"-DCMAKE_CUDA_COMPILER={nvcc} -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF")
+       f"-DCMAKE_CUDA_COMPILER={nvcc} -DCMAKE_LIBRARY_PATH='/tmp/cudalib;{cuda_root}/lib64/stubs' "
+       f"-DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF")
     sh("cmake --build /tmp/llama.cpp/build --target llama-server -j$(nproc)")
 
     from huggingface_hub import hf_hub_download

@@ -7,12 +7,8 @@ anywhere. Paths are injected server-side; the model only sees design arguments.
 import json
 import urllib.request
 
-TOOLS = [
-    "place_component", "add_power_symbol", "get_pin_positions", "connect_pins",
-    "wire_pins_to_net", "add_label", "list_schematic_components",
-    "list_unconnected_pins", "run_erc", "no_connect_pin", "remove_component",
-]
-HIDDEN_ARGS = {"schematic_path", "project_path", "symbol_lib_path", "output_dir"}
+# Path arguments the server fills in for the current design; the model never sees them.
+INJECTED_ARGS = ("schematic_path", "project_path")
 
 SYSTEM = """You are a KiCad schematic designer. Turn the user's request into a schematic by calling tools.
 Rules:
@@ -63,18 +59,23 @@ class MCPClient:
 
 
 def openai_tools(mcp_tools):
-    out = []
-    by_name = {t["name"]: t for t in mcp_tools}
-    for name in TOOLS:
-        t = by_name[name]
+    """All server tools as OpenAI functions, minus the injected path arguments.
+
+    Returns (tools, injectable) where injectable maps tool name -> the injected
+    args that tool actually accepts.
+    """
+    out, injectable = [], {}
+    for t in mcp_tools:
         schema = json.loads(json.dumps(t["inputSchema"]))
-        for k in HIDDEN_ARGS:
-            schema.get("properties", {}).pop(k, None)
+        props = schema.get("properties", {})
+        injectable[t["name"]] = [k for k in INJECTED_ARGS if k in props]
+        for k in injectable[t["name"]]:
+            props.pop(k)
         if "required" in schema:
-            schema["required"] = [r for r in schema["required"] if r not in HIDDEN_ARGS]
-        desc = t.get("description", "").split("\n\nArgs:")[0].strip()
-        out.append({"type": "function", "function": {"name": name, "description": desc, "parameters": schema}})
-    return out
+            schema["required"] = [r for r in schema["required"] if r not in INJECTED_ARGS]
+        out.append({"type": "function", "function": {
+            "name": t["name"], "description": t.get("description", "").strip(), "parameters": schema}})
+    return out, injectable
 
 
 def chat(llm_url, llm_key, model, messages, tools):
@@ -85,7 +86,8 @@ def chat(llm_url, llm_key, model, messages, tools):
         return json.loads(r.read())
 
 
-def run(prompt, *, llm_url, llm_key, model, mcp, tools, schematic_path, history=None, max_steps=40, on_event=print):
+def run(prompt, *, llm_url, llm_key, model, mcp, tools, injectable, schematic_path, project_path="",
+        history=None, max_steps=40, on_event=print):
     """Run one user request to completion. Yields events via on_event; returns updated history."""
     messages = history or [{"role": "system", "content": SYSTEM}]
     messages.append({"role": "user", "content": prompt})
@@ -104,12 +106,11 @@ def run(prompt, *, llm_url, llm_key, model, mcp, tools, schematic_path, history=
             except json.JSONDecodeError as e:
                 result = {"isError": True, "result": f"arguments were not valid JSON: {e}"}
             else:
-                if name not in TOOLS:
-                    result = {"isError": True, "result": f"unknown tool {name}; use one of {TOOLS}"}
+                if name not in injectable:
+                    result = {"isError": True, "result": f"unknown tool {name}"}
                 else:
-                    args["schematic_path"] = schematic_path
-                    result = mcp.call(name, args)
-                    args.pop("schematic_path")
+                    paths = {"schematic_path": schematic_path, "project_path": project_path}
+                    result = mcp.call(name, {**args, **{k: paths[k] for k in injectable[name] if paths[k]}})
             on_event({"type": "tool", "name": name, "args": args, **result})
             messages.append({"role": "tool", "tool_call_id": c.get("id", name),
                              "content": json.dumps(result["result"])[:4000]})

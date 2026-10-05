@@ -9,7 +9,7 @@ set -euo pipefail
 PW=infini_rag_flow
 DATA=${RAGFLOW_DATA:-/var/lib/ragflow-deps}
 ES_VERSION=8.11.3 NATS_VERSION=2.14.2
-export DEBIAN_FRONTEND=noninteractive PATH=/usr/local/go127/bin:$PATH GOTOOLCHAIN=local
+export DEBIAN_FRONTEND=noninteractive PATH=/usr/local/goragflow/bin:/usr/local/go127/bin:$PATH GOTOOLCHAIN=local
 step() { echo "=== [$(date -u +%T)] $*"; }
 
 install() {

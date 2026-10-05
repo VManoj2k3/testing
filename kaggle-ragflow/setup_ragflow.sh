@@ -31,8 +31,16 @@ fi
 export PATH=/usr/local/goragflow/bin:$PATH CC=clang-20 CXX=clang++-20
 
 step "native deps + models (download_deps.py)"
-python3 -m venv /tmp/ragflow-dl && /tmp/ragflow-dl/bin/pip install -q requests huggingface-hub
-(cd "$SRC" && /tmp/ragflow-dl/bin/python ragflow_deps/download_deps.py >/tmp/ragflow-deps.log 2>&1) \
+# Kaggle's python already ships requests + huggingface_hub, and its ensurepip is broken
+# (a plain venv ends up without pip), so only build a venv when the imports are missing.
+PY=python3
+if ! python3 -c "import requests, huggingface_hub" 2>/dev/null; then
+  python3 -m venv --without-pip /tmp/ragflow-dl
+  curl -fsSL https://bootstrap.pypa.io/get-pip.py | /tmp/ragflow-dl/bin/python - -q
+  /tmp/ragflow-dl/bin/python -m pip install -q requests huggingface-hub
+  PY=/tmp/ragflow-dl/bin/python
+fi
+(cd "$SRC" && "$PY" ragflow_deps/download_deps.py >/tmp/ragflow-deps.log 2>&1) \
   || { tail -30 /tmp/ragflow-deps.log; exit 1; }
 
 step "build.sh --all"

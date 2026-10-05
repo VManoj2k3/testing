@@ -13,6 +13,10 @@ export DEBIAN_FRONTEND=noninteractive PATH=/usr/local/goragflow/bin:/usr/local/g
 step() { echo "=== [$(date -u +%T)] $*"; }
 
 install() {
+  # Stop apt postinst scripts from auto-starting mysqld/redis: on hosts without a
+  # policy-rc.d (Kaggle) those daemons inherit the caller's stdout pipe and the step never ends.
+  # We start every service ourselves in start().
+  printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod +x /usr/sbin/policy-rc.d
   step "apt: mysql, redis"
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends mysql-server redis-server curl ca-certificates >/dev/null

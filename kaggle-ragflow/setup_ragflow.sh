@@ -10,6 +10,7 @@ step() { echo "=== [$(date -u +%T)] $*"; }
 . /etc/os-release
 
 step "toolchain: clang-20, lld-20, pcre2, nginx, openssl"
+printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod +x /usr/sbin/policy-rc.d  # don't auto-start nginx
 curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key -o /etc/apt/trusted.gpg.d/apt.llvm.org.asc
 echo "deb http://apt.llvm.org/$VERSION_CODENAME/ llvm-toolchain-$VERSION_CODENAME-20 main" > /etc/apt/sources.list.d/llvm20.list
 apt-get update -qq

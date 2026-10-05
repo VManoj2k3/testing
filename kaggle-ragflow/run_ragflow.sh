@@ -43,7 +43,7 @@ start() {
   cp "$SRC/docker/nginx/nginx.conf" /etc/nginx/nginx.conf
   rm -f /etc/nginx/sites-enabled/default
   nginx -t 2>&1 | tail -1
-  nginx -s reload 2>/dev/null || nginx
+  nginx -s reload </dev/null >/dev/null 2>&1 || nginx </dev/null >/dev/null 2>&1
   for _ in $(seq 30); do curl -s -o /dev/null http://127.0.0.1:"$PORT"/ && break; sleep 1; done
   step "up: web $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:"$PORT"/), api $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:"$PORT"/api/v1/system/healthz)"
 }

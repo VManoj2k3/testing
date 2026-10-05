@@ -32,6 +32,28 @@ def sh(cmd, env=None):
         raise RuntimeError(f"`{cmd[:60]}` exit {r.returncode}: ...{r.stdout[-1500:]}")
     return r.stdout
 
+def sh_steps(cmd, timeout_s, env=None):
+    """Run a script, forwarding its '=== step' lines to ntfy; on failure or timeout report the log tail."""
+    print("+", cmd, flush=True)
+    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                         env={**os.environ, **(env or {})})
+    tail, deadline = [], time.time() + timeout_s
+    timer = threading.Timer(timeout_s, p.kill)
+    timer.start()
+    try:
+        for line in p.stdout:
+            print(line, end="", flush=True)
+            tail = (tail + [line.rstrip()])[-40:]
+            if line.startswith("=== "):
+                notify("STEP " + line[4:].strip()[:200])
+    finally:
+        timer.cancel()
+    rc = p.wait()
+    if time.time() >= deadline:
+        raise RuntimeError(f"`{cmd[:50]}` timed out after {timeout_s}s; last lines: " + " | ".join(tail[-12:])[-1400:])
+    if rc:
+        raise RuntimeError(f"`{cmd[:50]}` exit {rc}: " + " | ".join(tail[-15:])[-1400:])
+
 def shutdown(reason, error=False):
     notify(f"{'ERROR' if error else 'STOPPED'} {reason}")
     for p in procs:
@@ -106,14 +128,14 @@ def main():
     # Sequential on purpose: both steps use apt-get (dpkg lock), and MinIO is built with the Go
     # toolchain that setup_ragflow.sh installs.
     t0 = time.time()
-    sh("bash /tmp/setup_ragflow.sh", env={"RAGFLOW_SRC": SRC})
+    sh_steps("bash /tmp/setup_ragflow.sh", 3600, env={"RAGFLOW_SRC": SRC})
     notify(f"BUILT in {int(time.time() - t0)}s")
-    sh("bash /tmp/deps_ragflow.sh install")
-    sh("bash /tmp/deps_ragflow.sh start")
+    sh_steps("bash /tmp/deps_ragflow.sh install", 1500)
+    sh_steps("bash /tmp/deps_ragflow.sh start", 900)
     notify("DEPS " + sh("bash /tmp/deps_ragflow.sh status").replace("\n", " ").strip())
 
     notify("EMBEDDER " + start_embedder())
-    sh("bash /tmp/run_ragflow.sh start", env={"RAGFLOW_SRC": SRC, "RAGFLOW_WEB_PORT": str(WEB_PORT)})
+    sh_steps("bash /tmp/run_ragflow.sh start", 600, env={"RAGFLOW_SRC": SRC, "RAGFLOW_WEB_PORT": str(WEB_PORT)})
     out = sh(f"bash /tmp/run_ragflow.sh create_admin '{ADMIN_EMAIL}' '{ADMIN_PASS}'", env={"RAGFLOW_SRC": SRC})
     notify("ADMIN " + " | ".join(l for l in out.splitlines() if l.startswith(("login:", "sign-up:")))[:400])
     notify(f"APP_URL {tunnel(WEB_PORT)}")

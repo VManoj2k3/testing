@@ -15,6 +15,9 @@ echo "deb http://apt.llvm.org/$VERSION_CODENAME/ llvm-toolchain-$VERSION_CODENAM
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends clang-20 lld-20 libpcre2-dev nginx openssl git >/dev/null
 python3 -m pip install -q "cmake>=4"
+# build.sh checks for unversioned clang++ / ld.lld; the apt.llvm.org packages only ship
+# -20 suffixed binaries (build.sh's own hint: ln -s /usr/bin/ld.lld-20 /usr/bin/ld.lld).
+for t in clang clang++ ld.lld; do command -v "$t" >/dev/null || ln -sf "/usr/bin/$t-20" "/usr/local/bin/$t"; done
 if [ "$(node -v 2>/dev/null | sed 's/^v\([0-9]*\).*/\1/')" != 22 ]; then
   step "node 22"
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null

@@ -1,19 +1,20 @@
-# Runs INSIDE a Kaggle CPU session. Builds open-code-review, serves its read-only
-# session viewer behind a Cloudflare quick tunnel, and reviews the repo's own recent
-# commits one at a time with Qwen (llama-server). Reports via ntfy; kill switch included.
+# Runs INSIDE a Kaggle CPU session. Builds open-code-review and serves app.py (start
+# reviews of public GitHub code from a browser, plus ocr's session viewer) behind a
+# Cloudflare quick tunnel with HTTP Basic auth. LLM is Qwen on llama-server. Reports via ntfy; kill switch included.
 # __PLACEHOLDERS__ are substituted by launch.sh.
-import os, re, signal, subprocess, threading, time, urllib.request
+import base64, os, re, signal, subprocess, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 SECRET = "__SECRET__"
 NTFY_TOPIC = "__NTFY_TOPIC__"
 MAX_RUNTIME_MIN = int("__MAX_RUNTIME_MIN__")  # dead-man switch: hard stop
 LLM_URL, LLM_KEY, LLM_MODEL = "__LLM_URL__", "__LLM_KEY__", "__LLM_MODEL__"
-N_COMMITS = int("__N_COMMITS__")
+APP_USER, APP_PASS = "__APP_USER__", "__APP_PASS__"
+APP_PY = base64.b64decode("__APP_B64__").decode()
 GO_VERSION = "1.25.5"
 REPO, SRC = "https://github.com/alibaba/open-code-review", "/kaggle/working/open-code-review"
 OCR = f"{SRC}/dist/opencodereview"
-VIEWER_PORT, KILL_PORT = 5483, 8081
+VIEWER_PORT, APP_PORT, KILL_PORT = 5483, 8080, 8081
 procs = []
 
 def notify(msg):
@@ -85,37 +86,30 @@ def main():
                  ("custom_providers.kaggle-qwen.timeout_sec", "1800")]:
         subprocess.run([OCR, "config", "set", k, v], check=True, capture_output=True)
 
-    # Viewer first, so the link works (empty) while reviews run; it re-reads sessions per request.
-    viewer_url = tunnel(VIEWER_PORT)
-    viewer = subprocess.Popen([OCR, "viewer", "--addr", f"127.0.0.1:{VIEWER_PORT}", "--open=never", "--color", "never"],
-                              env={**os.environ, "OCR_VIEWER_ALLOWED_HOSTS": viewer_url.split("//")[1]})
+    # ocr's viewer stays on loopback (its host guard accepts 127.0.0.1); app.py fronts it,
+    # adds the /run page, and puts everything behind HTTP Basic auth.
+    viewer = subprocess.Popen([OCR, "viewer", "--addr", f"127.0.0.1:{VIEWER_PORT}", "--open=never", "--color", "never"])
     procs.append(viewer)
+    with open("/tmp/app.py", "w") as f:
+        f.write(APP_PY)
+    app = subprocess.Popen(["python3", "/tmp/app.py"], env={
+        **os.environ, "APP_USER": APP_USER, "APP_PASS": APP_PASS, "OCR_BIN": OCR,
+        "VIEWER": f"http://127.0.0.1:{VIEWER_PORT}", "WORK_DIR": "/kaggle/working/ocr-jobs",
+        "PORT": str(APP_PORT), "MODEL_NAME": LLM_MODEL})
+    procs.append(app)
     for _ in range(30):
         try:
-            urllib.request.urlopen(f"http://127.0.0.1:{VIEWER_PORT}/", timeout=3); break
+            urllib.request.urlopen(f"http://127.0.0.1:{APP_PORT}/run", timeout=3)
+        except urllib.error.HTTPError:
+            break  # 401 = app is up and enforcing auth
         except Exception:
             time.sleep(1)
-    notify(f"VIEWER_URL {viewer_url}")
-    notify("READY viewer")
-
-    commits = sh(f"git -C {SRC} log --no-merges -{N_COMMITS} --format='%h %s'").stdout.strip().splitlines()
-    for line in commits:
-        h, subject = line.split(" ", 1)
-        if viewer.poll() is not None:
-            shutdown("viewer exited", error=True)
-        t0 = time.time()
-        notify(f"REVIEW_START {h} {subject[:70]}")
-        try:
-            r = sh(f"cd {SRC} && {OCR} review -c {h} --timeout 60 --color never", check=False, timeout=90 * 60)
-            out = r.stdout
-            m = re.search(r"Review complete: (\d+) finding", out)
-            summary = (m and f"{m.group(1)} findings") or f"exit {r.returncode}: {out.strip().splitlines()[-1][:300] if out.strip() else ''}"
-        except subprocess.TimeoutExpired:
-            summary = "timed out after 90 min"
-        notify(f"REVIEW_DONE {h} {summary} in {int((time.time() - t0) / 60)}m")
-    notify("ALL_REVIEWS_DONE")
-    viewer.wait()
-    shutdown("viewer exited", error=True)
+    app_url = tunnel(APP_PORT)
+    notify(f"APP_URL {app_url}/run")
+    notify("READY app")
+    while viewer.poll() is None and app.poll() is None:
+        time.sleep(10)
+    shutdown("viewer or app exited", error=True)
 
 if __name__ == "__main__":
     signal.signal(signal.SIGTERM, lambda *a: shutdown("SIGTERM"))

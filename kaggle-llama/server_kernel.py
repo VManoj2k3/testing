@@ -12,7 +12,8 @@ QUANT = "__QUANT__"
 CTX = int("__CTX__")
 MAX_RUNTIME_MIN = int("__MAX_RUNTIME_MIN__")  # dead-man switch: hard stop
 ALIAS = MODEL_REPO.split("/")[-1].lower()
-LLAMA_PORT, KILL_PORT = 8080, 8081
+LLAMA_PORT, KILL_PORT, EMBED_PORT = 8080, 8081, 8093
+EMBED_REPO = "__EMBED_REPO__"  # optional embedding GGUF repo served on the same GPUs; "" to skip
 procs = []
 
 def notify(msg):
@@ -60,6 +61,40 @@ def tunnel(port):
             threading.Thread(target=lambda: [None for _ in p.stderr], daemon=True).start()
             return m.group(0)
     raise RuntimeError("cloudflared exited without a URL")
+
+def start_embedder(hf_hub_download):
+    """Optional second llama-server on the same GPUs serving an embedding GGUF (e.g. bge-m3 for
+    RAGFlow). CPU embedding on a 4-core box timed out under RAGFlow's batch sizes; on a T4 it is fast.
+    Same API key as the chat server. Failure is reported but does not take the chat server down."""
+    try:
+        from huggingface_hub import list_repo_files
+        files = list_repo_files(EMBED_REPO)
+        fname = next(f for pref in ("Q8_0", "FP16", "F16") for f in files if pref in f and f.endswith(".gguf"))
+        model = hf_hub_download(EMBED_REPO, fname)
+        p = subprocess.Popen(["/tmp/llama.cpp/build/bin/llama-server", "-m", model, "--embedding",
+                              "--pooling", "cls", "-c", "16384", "-ub", "4096", "-b", "4096", "-np", "4",
+                              "-ngl", "99", "--main-gpu", "1", "--split-mode", "none",
+                              "--host", "127.0.0.1", "--port", str(EMBED_PORT),
+                              "--api-key", SECRET, "--alias", "bge-m3"],
+                             stdout=open("/tmp/embedder.log", "w"), stderr=subprocess.STDOUT)
+        procs.append(p)
+        for _ in range(120):
+            try:
+                req = urllib.request.Request(f"http://127.0.0.1:{EMBED_PORT}/v1/embeddings",
+                                             data=json.dumps({"input": ["hello", "world"], "model": "bge-m3"}).encode(),
+                                             headers={"Content-Type": "application/json", "Authorization": f"Bearer {SECRET}"})
+                dim = len(json.load(urllib.request.urlopen(req, timeout=10))["data"][0]["embedding"])
+                break
+            except Exception:
+                if p.poll() is not None:
+                    raise RuntimeError("embedder exited: " + open("/tmp/embedder.log").read()[-600:])
+                time.sleep(2)
+        else:
+            raise RuntimeError("embedder never answered")
+        notify(f"EMBED_URL {tunnel(EMBED_PORT)}/v1")
+        notify(f"EMBEDDER {fname} on GPU, dim {dim}")
+    except Exception as e:
+        notify(f"WARN embedder failed: {type(e).__name__}: {e}"[:600])
 
 def find_gguf():
     """Return (repo, [files]) for the requested quant; never substitutes another model."""
@@ -132,6 +167,8 @@ def main():
                 shutdown("llama-server crashed: " + "".join(tail[-8:])[-1500:], error=True)
             time.sleep(2)
     notify(f"LLM_URL {tunnel(LLAMA_PORT)}/v1")
+    if EMBED_REPO:
+        start_embedder(hf_hub_download)
     notify(f"READY {ALIAS}")
     server.wait()
     shutdown("llama-server exited", error=True)

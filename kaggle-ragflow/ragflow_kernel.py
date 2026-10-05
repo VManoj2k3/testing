@@ -156,6 +156,20 @@ def main():
     notify("ADMIN " + " | ".join(l for l in out.splitlines() if l.startswith(("login:", "sign-up:")))[:400])
     notify(f"APP_URL {tunnel(WEB_PORT)}")
     notify("READY ragflow")
+    # Forward ingestor errors to ntfy so parse failures are diagnosable from outside Kaggle.
+    def forward_errors():
+        path, pos = "/var/log/ragflow/ingestor.log", 0
+        while True:
+            try:
+                with open(path, errors="replace") as f:
+                    f.seek(pos); chunk = f.read(); pos = f.tell()
+                for line in chunk.splitlines():
+                    if re.search(r"\t(error|fatal|panic)\t|failed|timeout|deadline", line, re.I):
+                        notify("INGEST " + line[:500])
+            except FileNotFoundError:
+                pass
+            time.sleep(10)
+    threading.Thread(target=forward_errors, daemon=True).start()
     while True:
         time.sleep(30)
         if "ok" not in sh("curl -s -m 10 http://127.0.0.1:9380/api/v1/system/healthz || true"):

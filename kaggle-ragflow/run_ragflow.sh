@@ -8,6 +8,11 @@ SRC=${RAGFLOW_SRC:?set RAGFLOW_SRC to the built ragflow checkout}
 LOGS=${RAGFLOW_LOGS:-/var/log/ragflow}
 PORT=${RAGFLOW_WEB_PORT:-80}
 step() { echo "=== [$(date -u +%T)] $*"; }
+# DeepDoc (layout/OCR/table ONNX models) defaults to ONE CPU thread per inference and 2 pages in
+# flight. RAGFlow 1.0 has no GPU path for DeepDoc, so use every core instead (documented knobs in
+# conf/service_conf.yaml). Measured on a 15-page paper, 4 cores: 121s -> 54s, same 32 chunks.
+export RAGFLOW_DEEPDOC_INFERENCE_CPU_CORES=${RAGFLOW_DEEPDOC_INFERENCE_CPU_CORES:-0}
+export RAGFLOW_INGESTOR_PAGE_CONCURRENCY=${RAGFLOW_INGESTOR_PAGE_CONCURRENCY:-$(nproc)}
 
 health() {
   for _ in $(seq "${1:-90}"); do

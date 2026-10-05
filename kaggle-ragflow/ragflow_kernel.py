@@ -23,36 +23,49 @@ def notify(msg):
     except Exception as e:
         print(f"[notify] failed: {e}", flush=True)
 
-def sh(cmd, env=None):
-    print("+", cmd, flush=True)
-    r = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                       env={**os.environ, **(env or {})})
-    print(r.stdout[-6000:], flush=True)
-    if r.returncode:
-        raise RuntimeError(f"`{cmd[:60]}` exit {r.returncode}: ...{r.stdout[-1500:]}")
-    return r.stdout
+_run_no = [0]
+
+def _run_logged(cmd, timeout_s, env, on_line):
+    """Run cmd with output to a log file and poll for exit. Never waits for pipe EOF: daemons a
+    script starts can inherit its output and keep a pipe open forever after the script exits."""
+    _run_no[0] += 1
+    path = f"/tmp/step-{_run_no[0]}.log"
+    print("+", cmd, "->", path, flush=True)
+    with open(path, "w") as out:
+        p = subprocess.Popen(cmd, shell=True, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                             env={**os.environ, **(env or {})}, start_new_session=True)
+    deadline, pos, lines = time.time() + timeout_s, 0, []
+    while True:
+        rc = p.poll()
+        with open(path, errors="replace") as f:
+            f.seek(pos)
+            chunk = f.read()
+            pos = f.tell()
+        for line in chunk.splitlines():
+            print(line, flush=True)
+            lines = (lines + [line])[-40:]
+            on_line(line)
+        if rc is not None:
+            return rc, lines, open(path, errors="replace").read()
+        if time.time() > deadline:
+            p.kill()
+            raise RuntimeError(f"`{cmd[:50]}` timed out after {timeout_s}s; last lines: " + " | ".join(lines[-12:])[-1400:])
+        time.sleep(2)
+
+def sh(cmd, env=None, timeout_s=1800):
+    rc, lines, full = _run_logged(cmd, timeout_s, env, lambda l: None)
+    if rc:
+        raise RuntimeError(f"`{cmd[:60]}` exit {rc}: ...{full[-1500:]}")
+    return full
 
 def sh_steps(cmd, timeout_s, env=None):
-    """Run a script, forwarding its '=== step' lines to ntfy; on failure or timeout report the log tail."""
-    print("+", cmd, flush=True)
-    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                         env={**os.environ, **(env or {})})
-    tail, deadline = [], time.time() + timeout_s
-    timer = threading.Timer(timeout_s, p.kill)
-    timer.start()
-    try:
-        for line in p.stdout:
-            print(line, end="", flush=True)
-            tail = (tail + [line.rstrip()])[-40:]
-            if line.startswith("=== "):
-                notify("STEP " + line[4:].strip()[:200])
-    finally:
-        timer.cancel()
-    rc = p.wait()
-    if time.time() >= deadline:
-        raise RuntimeError(f"`{cmd[:50]}` timed out after {timeout_s}s; last lines: " + " | ".join(tail[-12:])[-1400:])
+    """Like sh(), forwarding '=== step' lines to ntfy as they appear."""
+    def fwd(line):
+        if line.startswith("=== "):
+            notify("STEP " + line[4:].strip()[:200])
+    rc, lines, _ = _run_logged(cmd, timeout_s, env, fwd)
     if rc:
-        raise RuntimeError(f"`{cmd[:50]}` exit {rc}: " + " | ".join(tail[-15:])[-1400:])
+        raise RuntimeError(f"`{cmd[:50]}` exit {rc}: " + " | ".join(lines[-15:])[-1400:])
 
 def shutdown(reason, error=False):
     notify(f"{'ERROR' if error else 'STOPPED'} {reason}")

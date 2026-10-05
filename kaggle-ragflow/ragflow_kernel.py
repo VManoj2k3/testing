@@ -96,12 +96,12 @@ def tunnel(port):
 
 def start_embedder():
     """bge-m3 GGUF behind llama.cpp's prebuilt CPU llama-server, OpenAI-compatible /v1/embeddings."""
-    rel = json.load(urllib.request.urlopen("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest", timeout=30))
-    asset = next(a for a in rel["assets"] if re.search(r"bin-ubuntu-x64\.(zip|tar\.gz)$", a["name"]))
-    sh(f"cd /tmp && curl -fsSL -o llama.pkg {asset['browser_download_url']} && mkdir -p llama && "
-       f"({'unzip -q -o llama.pkg -d llama' if asset['name'].endswith('.zip') else 'tar -xzf llama.pkg -C llama'})")
-    server = sh("find /tmp/llama -name llama-server -type f | head -1").strip()
-    sh(f"chmod +x {server}")
+    # Build llama-server (CPU) from source: prebuilt release asset names change between releases.
+    sh("rm -rf /tmp/llama.cpp && git clone -q --depth 1 https://github.com/ggml-org/llama.cpp /tmp/llama.cpp && "
+       "cmake -S /tmp/llama.cpp -B /tmp/llama.cpp/build -DGGML_NATIVE=ON -DLLAMA_CURL=OFF "
+       "-DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release && "
+       "cmake --build /tmp/llama.cpp/build --target llama-server -j$(nproc)", timeout_s=1500)
+    server = "/tmp/llama.cpp/build/bin/llama-server"
     sh("pip install -q -U huggingface_hub")
     from huggingface_hub import list_repo_files, hf_hub_download
     files = list_repo_files("gpustack/bge-m3-GGUF")
@@ -109,7 +109,7 @@ def start_embedder():
     model = hf_hub_download("gpustack/bge-m3-GGUF", fname)
     p = subprocess.Popen([server, "-m", model, "--embedding", "--pooling", "cls", "-c", "8192", "-ub", "8192",
                           "--host", "127.0.0.1", "--port", str(EMBED_PORT), "--alias", "bge-m3"],
-                         cwd=os.path.dirname(server), env={**os.environ, "LD_LIBRARY_PATH": os.path.dirname(server)},
+                         cwd=os.path.dirname(server),
                          stdout=open("/tmp/embedder.log", "w"), stderr=subprocess.STDOUT)
     procs.append(p)
     for _ in range(120):
@@ -118,7 +118,7 @@ def start_embedder():
                                          data=json.dumps({"input": "hello", "model": "bge-m3"}).encode(),
                                          headers={"Content-Type": "application/json"})
             dim = len(json.load(urllib.request.urlopen(req, timeout=10))["data"][0]["embedding"])
-            return f"{asset['name']} + {fname}, dim {dim}"
+            return f"llama-server (source) + {fname}, dim {dim}"
         except Exception:
             if p.poll() is not None:
                 raise RuntimeError("embedder exited: " + open("/tmp/embedder.log").read()[-800:])
@@ -147,7 +147,10 @@ def main():
     sh_steps("bash /tmp/deps_ragflow.sh start", 900)
     notify("DEPS " + sh("bash /tmp/deps_ragflow.sh status").replace("\n", " ").strip())
 
-    notify("EMBEDDER " + start_embedder())
+    try:
+        notify("EMBEDDER " + start_embedder())
+    except Exception as e:  # keep going: the app is still usable, and this is fixable without a rebuild
+        notify(f"WARN embedder failed, continuing without it: {type(e).__name__}: {e}"[:600])
     sh_steps("bash /tmp/run_ragflow.sh start", 600, env={"RAGFLOW_SRC": SRC, "RAGFLOW_WEB_PORT": str(WEB_PORT)})
     out = sh(f"bash /tmp/run_ragflow.sh create_admin '{ADMIN_EMAIL}' '{ADMIN_PASS}'", env={"RAGFLOW_SRC": SRC})
     notify("ADMIN " + " | ".join(l for l in out.splitlines() if l.startswith(("login:", "sign-up:")))[:400])

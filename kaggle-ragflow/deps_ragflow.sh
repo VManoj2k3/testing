@@ -38,6 +38,16 @@ install() {
     mv "/opt/elasticsearch-$ES_VERSION" /opt/elasticsearch
     id es >/dev/null 2>&1 || useradd -r -s /usr/sbin/nologin es
   fi
+  if [ ! -d /usr/share/infinity/resource/rag ]; then
+    # Analyzer dictionaries the tokenizer loads at startup (RAGFLOW_DICT_PATH default);
+    # without them ingestor/api die with "failed to load base analyzer". Same as upstream Dockerfile.
+    step "infinity analyzer resources"
+    rm -rf /tmp/infinity-resource
+    git clone -q --depth 1 --single-branch https://github.com/infiniflow/resource.git /tmp/infinity-resource
+    mkdir -p /usr/share/infinity/resource
+    for d in rag opencc wordnet; do cp -r "/tmp/infinity-resource/$d" /usr/share/infinity/resource/; done
+    rm -rf /tmp/infinity-resource
+  fi
   step "install done"
 }
 
@@ -147,7 +157,7 @@ EOF
     su -s /bin/bash es -c "/opt/elasticsearch/bin/elasticsearch-keystore create -s >/dev/null 2>&1 || true; \
       echo '$PW' | /opt/elasticsearch/bin/elasticsearch-keystore add -x -f bootstrap.password"
   fi
-  su -s /bin/bash es -c "ES_JAVA_OPTS='-Xms2g -Xmx2g' /opt/elasticsearch/bin/elasticsearch -d -p $DATA/es.pid" \
+  su -s /bin/bash es -c "ES_JAVA_OPTS='-Xms2g -Xmx2g' /opt/elasticsearch/bin/elasticsearch -d -p $DATA/es/es.pid" \
     >"$DATA/logs/es-start.log" 2>&1 || { tail -30 "$DATA/logs/es-start.log"; return 1; }
   wait_port elasticsearch 1200 180
   for _ in $(seq 60); do
@@ -169,4 +179,4 @@ status() {
   done
 }
 
-"${1:-status}"
+if [ "${1:-status}" = start_one ]; then mkdir -p "$DATA"/logs "$DATA"/es; "start_$2"; else "${1:-status}"; fi

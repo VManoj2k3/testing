@@ -54,7 +54,7 @@ def tunnel(port):
                          stderr=subprocess.PIPE, text=True)
     procs.append(p)
     for line in p.stderr:
-        m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
+        m = re.search(r"https://(?!api\.)[a-z0-9-]+\.trycloudflare\.com", line)  # skip api.trycloudflare.com in error lines
         if m:
             threading.Thread(target=lambda: [None for _ in p.stderr], daemon=True).start()
             return m.group(0)

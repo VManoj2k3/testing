@@ -47,12 +47,12 @@ def main():
         states = [(d.get("name"), d.get("ingestion_status"), round(float(d.get("progress") or 0), 2), d.get("chunk_count")) for d in docs]
         print(f"{time.time() - t0:5.0f}s", states, flush=True)
         # ingestion_status is the source of truth (e.g. RUNNING, DONE, FAILED); progress can sit at 0.8 after a failure.
-        if docs and all(str(d.get("ingestion_status")).upper() in ("DONE", "SUCCESS", "FAILED", "CANCELLED", "CANCELED") for d in docs):
+        if docs and all(str(d.get("ingestion_status")).upper() in ("DONE", "SUCCESS", "COMPLETED", "FAILED", "CANCELLED", "CANCELED") for d in docs):
             break
         if time.time() - t0 > 1800:
             raise RuntimeError("parse did not finish in 30 min")
     for d in docs:
-        if str(d.get("ingestion_status")).upper() not in ("DONE", "SUCCESS"):
+        if str(d.get("ingestion_status")).upper() not in ("DONE", "SUCCESS", "COMPLETED"):
             print("FAILED:", d.get("name"), json.dumps(d.get("latest_ingestion_event"))[:800], flush=True)
     print(f"parsed in {time.time() - t0:.0f}s; chunks:", sum(int(d.get("chunk_count") or 0) for d in docs))
     print(f"DATASET_ID={ds}")

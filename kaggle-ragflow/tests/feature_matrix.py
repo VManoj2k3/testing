@@ -109,7 +109,7 @@ def chunking(path, methods):
         if chunks:
             c = api("GET", f"/datasets/{ds}/documents/{ids[0]}/chunks?page=1&page_size=1")
             items = (c.get("data") or {}).get("chunks") or []
-            first = (items[0].get("content") if items else "")[:90].replace("\n", " ").replace("|", "/")
+            first = ((items[0].get("content_with_weight") or items[0].get("content") or "") if items else "")[:90].replace("\n", " ").replace("|", "/")
         st = ",".join(str(d.get("ingestion_status")) for d in docs)
         print(f"| {m} | {st} | {chunks} | {secs:.0f} | {first} |", flush=True)
 

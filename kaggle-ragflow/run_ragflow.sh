@@ -13,6 +13,9 @@ step() { echo "=== [$(date -u +%T)] $*"; }
 # conf/service_conf.yaml). Measured on a 15-page paper, 4 cores: 121s -> 54s, same 32 chunks.
 export RAGFLOW_DEEPDOC_INFERENCE_CPU_CORES=${RAGFLOW_DEEPDOC_INFERENCE_CPU_CORES:-0}
 export RAGFLOW_INGESTOR_PAGE_CONCURRENCY=${RAGFLOW_INGESTOR_PAGE_CONCURRENCY:-$(nproc)}
+# RAGFlow defaults to open sign-up. Keep it closed on every start (a restart used to reopen it);
+# create_admin opens it only for the moment it registers the one account.
+export ENABLE_REGISTER=${ENABLE_REGISTER:-0}
 
 health() {
   for _ in $(seq "${1:-90}"); do

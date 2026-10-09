@@ -10,6 +10,7 @@ NTFY_TOPIC = "__NTFY_TOPIC__"
 MODEL_REPO = "__MODEL_REPO__"
 QUANT = "__QUANT__"
 CTX = int("__CTX__")
+NP = int("__NP__")  # parallel request slots; context is split evenly across them
 MAX_RUNTIME_MIN = int("__MAX_RUNTIME_MIN__")  # dead-man switch: hard stop
 ALIAS = MODEL_REPO.split("/")[-1].lower()
 LLAMA_PORT, KILL_PORT, EMBED_PORT = 8080, 8081, 8093
@@ -152,7 +153,7 @@ def main():
     server = subprocess.Popen(["/tmp/llama.cpp/build/bin/llama-server", "-m", paths[0],
                                "--host", "127.0.0.1", "--port", str(LLAMA_PORT),
                                "-ngl", "99", "--split-mode", "layer", "--tensor-split", "1,1",
-                               "-c", str(CTX), "--jinja", "--api-key", SECRET, "--alias", ALIAS],
+                               "-c", str(CTX), "-np", str(NP), "--jinja", "--api-key", SECRET, "--alias", ALIAS],
                               stderr=subprocess.PIPE, text=True)
     procs.append(server)
     tail = []

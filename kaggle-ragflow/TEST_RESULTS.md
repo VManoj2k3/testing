@@ -52,9 +52,18 @@ Every number below comes from a run in this session. Test scripts are in `kaggle
 
 - The "AUTH_SECRET_KEY / password hash exposed via /api/runtime-config" issue belongs to **Presenton** (`servers/fastapi/api/v1/auth/config.py`), not RAGFlow. RAGFlow v1.0 has no such route.
 
+## Git and Jira connectors (tested 2026-10-09, late)
+
+| Connector | Result |
+|---|---|
+| **Jira** | **Works end to end.** Apache's public Jira (Server 8.20, project KAFKA, issues updated in the last 3 days): 10 issues synced in 20 s, all 10 parsed in ~220 s, and retrieval returned the right issue with key, URL, summary, description and comments. Auth note: the connector requires credentials (no anonymous mode), and Apache's Jira treated a placeholder bearer token as anonymous read. A company Jira needs a real API token (Cloud: email + token; Server/DC: token or username/password), and the connector reads with that account's permissions. |
+| **GitLab** | gitlab.com is reachable and the connector/dataset link was created, but the sync failed: the connector **requires** `gitlab_access_token`, even for public projects (`internal/syncer/connector/gitlab.go`). Not completed without a token. |
+| **GitHub** | Not testable from this container: api.github.com is blocked by the network proxy (403). |
+| **Bitbucket** | Not tested. |
+
 ## Not covered
 
 - Oversized-upload limits (default `MAX_CONTENT_LENGTH` is 1 GB).
-- GitHub/GitLab/Jira connectors: api.github.com is blocked from this container, and no company credentials were available.
+- GitHub (blocked here) and GitLab (needs a token) connectors.
 - Answer quality on real company documents (the 30–50 question gold set is still needed).
 - Load and concurrency.

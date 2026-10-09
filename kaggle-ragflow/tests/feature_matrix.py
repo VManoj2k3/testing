@@ -42,7 +42,7 @@ def upload(ds, path):
 def new_dataset(name, chunk_method=None):
     body = {"name": f"{name}-{int(time.time())}"}
     if chunk_method:
-        body["chunk_method"] = chunk_method
+        body["parser_id"] = chunk_method  # the API field is parser_id
     r = api("POST", "/datasets", body)
     if r.get("code") != 0:
         raise RuntimeError(f"create dataset {body}: {r}")

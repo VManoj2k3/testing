@@ -44,15 +44,16 @@ def main():
         time.sleep(5)
         _, r = call("GET", f"/datasets/{ds}/documents?page=1&page_size=100", token=token)
         docs = (r.get("data") or {}).get("docs") or (r.get("data") or {}).get("documents") or []
-        states = [(d.get("name"), d.get("run"), round(float(d.get("progress") or 0), 2), d.get("chunk_count")) for d in docs]
+        states = [(d.get("name"), d.get("ingestion_status"), round(float(d.get("progress") or 0), 2), d.get("chunk_count")) for d in docs]
         print(f"{time.time() - t0:5.0f}s", states, flush=True)
-        if docs and all(str(d.get("run")).upper() in ("DONE", "3", "FAIL", "4", "CANCEL", "2") for d in docs):
+        # ingestion_status is the source of truth (e.g. RUNNING, DONE, FAILED); progress can sit at 0.8 after a failure.
+        if docs and all(str(d.get("ingestion_status")).upper() in ("DONE", "SUCCESS", "FAILED", "CANCELLED", "CANCELED") for d in docs):
             break
         if time.time() - t0 > 1800:
             raise RuntimeError("parse did not finish in 30 min")
     for d in docs:
-        if str(d.get("run")).upper() not in ("DONE", "3"):
-            print("FAILED:", d.get("name"), d.get("progress_msg", "")[-800:], flush=True)
+        if str(d.get("ingestion_status")).upper() not in ("DONE", "SUCCESS"):
+            print("FAILED:", d.get("name"), json.dumps(d.get("latest_ingestion_event"))[:800], flush=True)
     print(f"parsed in {time.time() - t0:.0f}s; chunks:", sum(int(d.get("chunk_count") or 0) for d in docs))
     print(f"DATASET_ID={ds}")
 

@@ -252,8 +252,13 @@ def main():
     qwen = start_llama(models["qwen"], models["embed"])
 
     # Ingestor starts on the GPU; if CUDA can't be used it refuses to start, so fall back to CPU and say so.
-    sh_steps("bash /tmp/run_ragflow.sh start", 600,
-             env={**gpu_env, "RAGFLOW_SRC": SRC, "RAGFLOW_WEB_PORT": str(WEB_PORT), "RAGFLOW_DEEPDOC_DEVICE": "cuda"})
+    try:
+        sh_steps("bash /tmp/run_ragflow.sh start", 600,
+                 env={**gpu_env, "RAGFLOW_SRC": SRC, "RAGFLOW_WEB_PORT": str(WEB_PORT), "RAGFLOW_INGESTOR_DEVICE": "cuda"})
+    except Exception:
+        for m in ("api", "ingestor", "admin"):
+            notify(f"LOG {m}: " + sh(f"tail -n 6 /var/log/ragflow/{m}.log 2>&1 || true")[-900:])
+        raise
     time.sleep(20)
     if "--ingestor" not in sh("ps -eo args | grep -- '--ingestor$' || true"):
         notify("WARN cuda ingestor did not start: " + sh("grep -iE 'fatal|device check' /var/log/ragflow/ingestor.log | tail -2 || true")[-700:])

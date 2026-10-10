@@ -36,13 +36,16 @@ start() {
   ./bin/ragflow_server --migrate >"$LOGS/migrate.log" 2>&1 || { tail -20 "$LOGS/migrate.log"; exit 1; }
   for m in admin ingestor syncer api; do
     step "start $m"
-    if [ "$m" = ingestor ]; then start_ingestor "${RAGFLOW_DEEPDOC_DEVICE:-cpu}"; continue; fi
-    (RAGFLOW_DEV_MODE=true nohup ./bin/ragflow_server --"$m" >"$LOGS/$m.log" 2>&1 &)
+    if [ "$m" = ingestor ]; then start_ingestor "${RAGFLOW_INGESTOR_DEVICE:-cpu}"; continue; fi
+    # The API also initialises DeepDoc: keep it (and admin/syncer) on the stock CPU path; only the
+    # GPU ingestor may see cuda or an external ORT library, or its startup device check kills the API.
+    (env -u RAGFLOW_ORT_LIBRARY_PATH RAGFLOW_DEEPDOC_DEVICE=cpu RAGFLOW_DEV_MODE=true \
+       nohup ./bin/ragflow_server --"$m" >"$LOGS/$m.log" 2>&1 &)
     if [ "$m" = admin ]; then sleep 6; fi  # upstream: start Admin before the other services
   done
   step "health"
   if ! health 90; then
-    for m in admin ingestor syncer api; do echo "--- $m"; grep -iE "error|fatal|panic" "$LOGS/$m.log" | tail -3; done
+    for m in admin ingestor syncer api; do echo "--- $m"; { grep -iE "error|fatal|panic" "$LOGS/$m.log" || true; } | tail -3; done
     exit 1
   fi
 
@@ -71,9 +74,9 @@ enc_pw() {
 # the GPU (RAGFLOW_DEEPDOC_CUDA_DEVICE_ID, RAGFLOW_ORT_LIBRARY_PATH from the environment). Either way at
 # most one document and one model call run at a time (worker + inference concurrency 1).
 start_ingestor() {
-  local bin=./bin/ragflow_server
-  [ "$1" = cuda ] && bin=./bin/ragflow_server_gpu
-  (cd "$SRC" && RAGFLOW_DEV_MODE=true RAGFLOW_DEEPDOC_DEVICE="$1" RAGFLOW_INGESTOR_MAX_CONCURRENT_WORKERS=1 \
+  local bin=./bin/ragflow_server unset=(-u RAGFLOW_ORT_LIBRARY_PATH)  # cpu: stock binary, its own static ORT
+  [ "$1" = cuda ] && bin=./bin/ragflow_server_gpu unset=()
+  (cd "$SRC" && env "${unset[@]}" RAGFLOW_DEV_MODE=true RAGFLOW_DEEPDOC_DEVICE="$1" RAGFLOW_INGESTOR_MAX_CONCURRENT_WORKERS=1 \
      RAGFLOW_DEEPDOC_INFERENCE_CONCURRENCY=1 nohup "$bin" --ingestor >>"$LOGS/ingestor.log" 2>&1 </dev/null &)
 }
 
@@ -83,7 +86,7 @@ restart_ingestor() {  # restart_ingestor <cpu|cuda>; prints whether it stayed up
   start_ingestor "$1"
   sleep 20
   if ps -eo args | grep -q -- "--ingestor$"; then echo "ingestor up ($1)"
-  else echo "ingestor DIED ($1): $(grep -iE 'fatal|device check' "$LOGS/ingestor.log" | tail -2)"; return 1; fi
+  else echo "ingestor DIED ($1): $({ grep -iE 'fatal|device check' "$LOGS/ingestor.log" || true; } | tail -2)"; return 1; fi
 }
 
 restart_api() {  # restart only the API process with ENABLE_REGISTER=$1

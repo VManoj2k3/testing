@@ -156,6 +156,60 @@ Every number below comes from a run in this session. Test scripts are in `kaggle
 - **RAGFlow returns that model error as the answer text** ("**ERROR**: [GraphRunError] … status 400 …") rather than as an error event, so users would see raw errors as replies.
 - 1 genuine wrong answer: asked about the big model's heads, the agent quoted the base model's 8. The correct answer is 16.
 
+## File formats, deep (2026-10-10)
+
+Generator `tests/format_cases.py` makes 51 small files, each hiding a unique code. Runner `tests/format_run.py` uploads them, parses and
+checks by **search only** (no LLM): pass = the code is in the top-3 chunks retrieved **from that file** (`document_ids` filter).
+A first run without that filter was invalid (files sharing a code could "pass" on each other's chunks) and was discarded.
+
+### 1. Extension sweep (36 files, `naive` method)
+
+| Result | Extensions |
+|---|---|
+| Accepted, parsed, found at rank 1 (25) | txt py js sql go md mdx html htm json jsonl eml xml **yml** **ini** **rtf** csv epub docx pptx xlsx pdf png jpg (OCR) |
+| Accepted, **parse FAILED** (2) | **svg** ("decode image: unknown format": whitelisted but the image parser can't read SVG — RAGFlow gap); **wav** ("no default speech2text model is set" — our setup) |
+| Rejected at upload (9) | **tsv**, log, **yaml** (while .yml is accepted), toml, cfg, zip, odt, ods, **arxml**, **dbc** |
+
+- The real upload whitelist (`internal/utility/file.go` `FilenameType`) is wider than recorded earlier: it also has yml, xml, ini, rtf, wps, hlp, pages, numbers, key.
+- A failed parse shows only `FAILED` with an empty `progress_msg` in the API; the reason is only in `ingestor.log`. A user would not know why.
+- For the user's AUTOSAR/Vector work: **.arxml and .dbc are rejected**. Renaming .arxml to .xml would be accepted (xml is listed), but that is not tested here.
+
+### 2. CSV deep (8 cases × 2 methods: all 16 pass)
+
+| Case | naive chunks | table chunks | Notes from the chunk text |
+|---|---|---|---|
+| 1,000 rows | 77 | 1000 | table = one chunk per row; parse 172 s for the 8 files vs 78 s naive |
+| 60 columns | 50 | 50 | all columns kept |
+| quoted commas + newline in field | 3 | 30 | `He said "yes, no", then, later` and the embedded newline kept intact |
+| semicolon delimiter | 3 | 30 | split into columns correctly (delimiter detected) |
+| UTF-8 BOM | 3 | 30 | **table mode keeps the BOM in the first header**: key is `﻿name`, not `name` (minor bug) |
+| Latin-1 | 2 | 21 | `Café Müller`, `Größe`, `Ñandú` decoded correctly in both |
+| no header | 3 | 29 | **first data row becomes the column names** (`item0: item15`), so row 0 is not its own chunk |
+| empty cells / empty row | 3 | 29 | empty cells omitted, fully empty row dropped |
+
+### 3. TSV
+
+| File | Result |
+|---|---|
+| `.tsv` | **rejected at upload** |
+| tab-separated saved as `.csv` | works in both methods; tabs detected as the delimiter, correct columns |
+| tab-separated saved as `.txt` | accepted and searchable, but stays one plain-text chunk (no row/column structure) |
+
+Workaround for TSV: rename to `.csv`.
+
+### 4. Excel deep (4 cases × 2 methods: all 8 pass)
+
+| Case | Result |
+|---|---|
+| 3 sheets | all sheets indexed; sheet name kept as table caption |
+| merged cells | **the merged value only goes on the first row**: row 2 is `Name: second, Code: other` with no `Group: Block A`, so "what is in Block A?" would miss it |
+| formula | the **computed value** (8642) is indexed, not the formula text. Note: openpyxl-generated files have no cached value; the test file had the value added the way Excel saves it |
+| 1,000 rows | naive 77 chunks, table 1000 chunks |
+
+### Not tested
+Legacy .doc/.xls/.ppt, .msg, video, and the whitelisted wps/hlp/pages/numbers/key (no valid samples can be made here).
+Audio parsing needs a speech-to-text model, which is not configured.
+
 ## Not covered
 
 - Oversized-upload limits (default `MAX_CONTENT_LENGTH` is 1 GB).

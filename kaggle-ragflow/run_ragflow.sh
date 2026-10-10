@@ -9,8 +9,10 @@ LOGS=${RAGFLOW_LOGS:-/var/log/ragflow}
 PORT=${RAGFLOW_WEB_PORT:-80}
 step() { echo "=== [$(date -u +%T)] $*"; }
 # DeepDoc (layout/OCR/table ONNX models) defaults to ONE CPU thread per inference and 2 pages in
-# flight. RAGFlow 1.0 has no GPU path for DeepDoc, so use every core instead (documented knobs in
+# flight. Stock RAGFlow 1.0 has no GPU path for DeepDoc, so use every core instead (documented knobs in
 # conf/service_conf.yaml). Measured on a 15-page paper, 4 cores: 121s -> 54s, same 32 chunks.
+# GPU: build bin/ragflow_server_gpu with ragflow_deepdoc_gpu.patch + build_gpu_server.sh, set
+# RAGFLOW_ORT_LIBRARY_PATH, and start/restart the ingestor with device "cuda" (see start_ingestor).
 export RAGFLOW_DEEPDOC_INFERENCE_CPU_CORES=${RAGFLOW_DEEPDOC_INFERENCE_CPU_CORES:-0}
 export RAGFLOW_INGESTOR_PAGE_CONCURRENCY=${RAGFLOW_INGESTOR_PAGE_CONCURRENCY:-$(nproc)}
 # RAGFlow defaults to open sign-up. Keep it closed on every start (a restart used to reopen it);
@@ -34,6 +36,7 @@ start() {
   ./bin/ragflow_server --migrate >"$LOGS/migrate.log" 2>&1 || { tail -20 "$LOGS/migrate.log"; exit 1; }
   for m in admin ingestor syncer api; do
     step "start $m"
+    if [ "$m" = ingestor ]; then start_ingestor "${RAGFLOW_DEEPDOC_DEVICE:-cpu}"; continue; fi
     (RAGFLOW_DEV_MODE=true nohup ./bin/ragflow_server --"$m" >"$LOGS/$m.log" 2>&1 &)
     if [ "$m" = admin ]; then sleep 6; fi  # upstream: start Admin before the other services
   done
@@ -62,6 +65,25 @@ start() {
 enc_pw() {
   printf %s "$(printf %s "$1" | base64 -w0)" \
     | openssl pkeyutl -encrypt -pubin -inkey "$SRC/conf/public.pem" -pkeyopt rsa_padding_mode:pkcs1 | base64 -w0
+}
+
+# start_ingestor <cpu|cuda>: cpu runs the stock binary; cuda runs bin/ragflow_server_gpu with DeepDoc on
+# the GPU (RAGFLOW_DEEPDOC_CUDA_DEVICE_ID, RAGFLOW_ORT_LIBRARY_PATH from the environment). Either way at
+# most one document and one model call run at a time (worker + inference concurrency 1).
+start_ingestor() {
+  local bin=./bin/ragflow_server
+  [ "$1" = cuda ] && bin=./bin/ragflow_server_gpu
+  (cd "$SRC" && RAGFLOW_DEV_MODE=true RAGFLOW_DEEPDOC_DEVICE="$1" RAGFLOW_INGESTOR_MAX_CONCURRENT_WORKERS=1 \
+     RAGFLOW_DEEPDOC_INFERENCE_CONCURRENCY=1 nohup "$bin" --ingestor >>"$LOGS/ingestor.log" 2>&1 </dev/null &)
+}
+
+restart_ingestor() {  # restart_ingestor <cpu|cuda>; prints whether it stayed up
+  for pid in $(ps -eo pid,args | awk '$2 ~ /ragflow_server(_gpu)?$/ && $3 == "--ingestor" {print $1}'); do kill "$pid"; done
+  sleep 5
+  start_ingestor "$1"
+  sleep 20
+  if ps -eo args | grep -q -- "--ingestor$"; then echo "ingestor up ($1)"
+  else echo "ingestor DIED ($1): $(grep -iE 'fatal|device check' "$LOGS/ingestor.log" | tail -2)"; return 1; fi
 }
 
 restart_api() {  # restart only the API process with ENABLE_REGISTER=$1
@@ -95,7 +117,7 @@ create_admin() {
 
 stop() {
   nginx -s stop 2>/dev/null || true
-  for pid in $(ps -eo pid,args | awk '$2 ~ /ragflow_server$/ {print $1}'); do kill "$pid"; done
+  for pid in $(ps -eo pid,args | awk '$2 ~ /ragflow_server(_gpu)?$/ {print $1}'); do kill "$pid"; done
 }
 
 "${1:-health}" "${@:2}"

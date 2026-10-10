@@ -96,6 +96,24 @@ Every number below comes from a run in this session. Test scripts are in `kaggle
   - Adjacent table cells can merge in the extracted text (`P190-4 | 806 | ms` → `P190-4806ms`), which can mislead number lookups.
   - Search is semantic, so an exact label query ("Chapter 197") returned the neighbouring chapter's chunk.
 
+### 4. Upload limits and filenames
+
+| Upload | Via nginx (:80) | Via API (:9380) |
+|---|---|---|
+| 50 MB | accepted (0.6 s) | accepted (0.4 s) |
+| 1.1 GB | **HTTP 413** immediately (`client_max_body_size 1024M`) | uploaded fully, then refused: "file exceeds the maximum allowed size of 134217728 bytes" |
+
+- **The real per-file limit is 128 MB**, not the 1 GB that nginx and Docker's `MAX_CONTENT_LENGTH` suggest. Files between 128 MB and 1 GB upload completely and are then refused. Temporary disk space was released afterwards (checked); no leak.
+- **Error codes:** validation failures (too large, unsupported type, bad name) come back as **HTTP 200 with `code: 500`**, which monitoring and clients will read as server crashes.
+- **Filenames:**
+  - 300 chars: rejected (255-byte limit).
+  - Unicode and emoji: stored correctly.
+  - `../../etc/passwd.txt`: sanitized to `passwd.txt`, stored inside the dataset's bucket; no path escape.
+  - `..\..\win.txt`: not sanitized by RAGFlow, but rejected by MinIO (as code 500).
+  - `<script>…</script>.txt`: stored as `script>.txt`.
+  - No extension: rejected.
+  - A text file renamed `.pdf`: accepted at upload.
+
 ## Not covered
 
 - Oversized-upload limits (default `MAX_CONTENT_LENGTH` is 1 GB).

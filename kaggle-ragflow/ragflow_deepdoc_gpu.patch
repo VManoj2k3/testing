@@ -1,9 +1,9 @@
 diff --git a/internal/deepdoc/native/device.go b/internal/deepdoc/native/device.go
 new file mode 100644
-index 0000000..e636a0c
+index 0000000..0861ae1
 --- /dev/null
 +++ b/internal/deepdoc/native/device.go
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,169 @@
 +//go:build cgo
 +
 +package native
@@ -29,9 +29,11 @@ index 0000000..e636a0c
 +
 +import (
 +	"fmt"
++	"log"
 +	"os"
 +	"strconv"
 +	"strings"
++	"sync"
 +
 +	ort "github.com/infiniflow/onnxruntime_go"
 +)
@@ -106,19 +108,14 @@ index 0000000..e636a0c
 +		return err
 +	}
 +	defer opts.Destroy()
-+	if err := appendDeviceProvider(opts); err != nil {
++	if err := appendCUDAProvider(opts); err != nil {
 +		return fmt.Errorf("DeepDoc device check failed: %w", err)
 +	}
 +	return nil
 +}
 +
-+// appendDeviceProvider adds the CUDA execution provider to opts when the GPU is
-+// requested. CUDA requested but unavailable is an error, not a silent CPU
-+// fallback, so a misconfigured GPU deployment fails at the first session.
-+func appendDeviceProvider(opts *ort.SessionOptions) error {
-+	if !useCUDA() {
-+		return nil
-+	}
++// appendCUDAProvider adds the CUDA execution provider to opts.
++func appendCUDAProvider(opts *ort.SessionOptions) error {
 +	memLimit, err := cudaMemLimitBytes()
 +	if err != nil {
 +		return err
@@ -142,8 +139,64 @@ index 0000000..e636a0c
 +	}
 +	return nil
 +}
++
++// cpuOnlyModels records models whose CUDA session could not be created, so
++// later sessions of that model go straight to CPU instead of failing again.
++var cpuOnlyModels sync.Map
++
++// newDeviceSession opens a session on the configured device. A model that
++// cannot be created on CUDA (e.g. RAGFlow's shipped .ort files are optimized
++// for the CPU provider and contain CPU-only fused kernels such as FusedConv
++// with HardSigmoid) falls back to CPU for that model, logged once. Without the
++// fallback the PDF parser treats the error as a warning and silently parses
++// without layout/OCR: faster, fewer chunks, worse results.
++func newDeviceSession(modelPath, inName, outName string, weights *weightSet) (*ort.DynamicAdvancedSession, error) {
++	_, cpuOnly := cpuOnlyModels.Load(modelPath)
++	cuda := useCUDA() && !cpuOnly
++	sess, err := openSession(modelPath, inName, outName, weights, cuda)
++	if err != nil && cuda {
++		if _, seen := cpuOnlyModels.LoadOrStore(modelPath, true); !seen {
++			log.Printf("deepdoc: %s cannot run on CUDA, using CPU for this model: %v", modelPath, err)
++		}
++		return openSession(modelPath, inName, outName, weights, false)
++	}
++	return sess, err
++}
++
++func openSession(modelPath, inName, outName string, weights *weightSet, cuda bool) (*ort.DynamicAdvancedSession, error) {
++	opts, err := newSessionOptions(weights, cuda)
++	if err != nil {
++		return nil, err
++	}
++	// The C session copies the options (and shared-initializer references) at
++	// creation time, so the handle can be released once the session is built.
++	defer opts.Destroy()
++	return ort.NewDynamicAdvancedSession(modelPath, []string{inName}, []string{outName}, opts)
++}
+diff --git a/internal/deepdoc/native/ocr_rec.go b/internal/deepdoc/native/ocr_rec.go
+index 44a1cf8..678aecc 100644
+--- a/internal/deepdoc/native/ocr_rec.go
++++ b/internal/deepdoc/native/ocr_rec.go
+@@ -307,16 +307,7 @@ func newRecSession(modelPath, inName string, inShape []int64, outName string, we
+ 	// disabled, and the shared initializers injected when weights != nil. See
+ 	// newSessionOptions in session.go for the rationale. Reusing it keeps the
+ 	// rec pool's session configuration in lockstep with the det/DLA/TSR pool.
+-	opts, err := newSessionOptions(weights)
+-	if err != nil {
+-		return nil, err
+-	}
+-	// The C session copies these options at creation time, so the options handle
+-	// can be released once the session is built. The shared weight buffers are
+-	// owned by the process-wide weightCache and outlive every session.
+-	defer opts.Destroy()
+-	sess, err := ort.NewDynamicAdvancedSession(modelPath,
+-		[]string{inName}, []string{outName}, opts)
++	sess, err := newDeviceSession(modelPath, inName, outName, weights)
+ 	if err != nil {
+ 		return nil, err
+ 	}
 diff --git a/internal/deepdoc/native/session.go b/internal/deepdoc/native/session.go
-index 036adbe..34873ed 100644
+index 036adbe..520a25f 100644
 --- a/internal/deepdoc/native/session.go
 +++ b/internal/deepdoc/native/session.go
 @@ -63,9 +63,14 @@ var (
@@ -173,13 +226,44 @@ index 036adbe..34873ed 100644
  	weightMu.Lock()
  	defer weightMu.Unlock()
  	if ws, ok := weightCache[modelPath]; ok {
-@@ -261,6 +271,10 @@ func newSessionOptions(weights *weightSet) (*ort.SessionOptions, error) {
+@@ -207,18 +217,7 @@ func NewSession(modelPath, inName string, inShape []int64, outName string) (*ses
+ // created; sharedWeights funnels its one-shot extraction source through a
+ // separate AdvancedSession (the only type exposing GetInitializer*).
+ func newRawSession(modelPath, inName string, inShape []int64, outName string, weights *weightSet) (*session, error) {
+-	opts, err := newSessionOptions(weights)
+-	if err != nil {
+-		return nil, err
+-	}
+-	// The C session copies these options (including the shared-initializer
+-	// references) at creation time, so the options handle can be released once
+-	// the session is built. The shared weight buffers themselves are owned by
+-	// the process-wide weightCache and outlive every session, so releasing opts
+-	// here does not free them.
+-	defer opts.Destroy()
+-	sess, err := ort.NewDynamicAdvancedSession(modelPath,
+-		[]string{inName}, []string{outName}, opts)
++	sess, err := newDeviceSession(modelPath, inName, outName, weights)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -236,7 +235,7 @@ func newRawSession(modelPath, inName string, inShape []int64, outName string, we
+ // per Run and freed after). When weights != nil, each shared initializer is
+ // injected so the model's constant buffers live in memory a single time across
+ // every pooled session of the same model.
+-func newSessionOptions(weights *weightSet) (*ort.SessionOptions, error) {
++func newSessionOptions(weights *weightSet, cuda bool) (*ort.SessionOptions, error) {
+ 	opts, err := ort.NewSessionOptions()
+ 	if err != nil {
+ 		return nil, err
+@@ -261,6 +260,12 @@ func newSessionOptions(weights *weightSet) (*ort.SessionOptions, error) {
  		opts.Destroy()
  		return nil, err
  	}
-+	if err := appendDeviceProvider(opts); err != nil {
-+		opts.Destroy()
-+		return nil, err
++	if cuda {
++		if err := appendCUDAProvider(opts); err != nil {
++			opts.Destroy()
++			return nil, err
++		}
 +	}
  	if weights != nil {
  		for i, v := range weights.vals {

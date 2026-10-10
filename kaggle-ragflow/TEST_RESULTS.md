@@ -210,6 +210,42 @@ Workaround for TSV: rename to `.csv`.
 Legacy .doc/.xls/.ppt, .msg, video, and the whitelisted wps/hlp/pages/numbers/key (no valid samples can be made here).
 Audio parsing needs a speech-to-text model, which is not configured.
 
+## GPU ingestion (2026-10-10, Kaggle 2x T4, RAGFlow 2400ca8 + ragflow_deepdoc_gpu.patch)
+
+Setup: one 2x T4 notebook (`kaggle-ragflow-gpu/`) with Qwen 27B (32k ctx), the bge-m3 embedder on GPU, and the
+patched ingestor with `RAGFLOW_DEEPDOC_DEVICE=cuda` on GPU 1, one document and one inference at a time.
+Benchmark: `tests/gpu_bench.py`, the 15-page Attention paper, same machine.
+
+| | GPU (`cuda`) | CPU (stock path) |
+|---|---|---|
+| Parse time | 22 s | 70 s (66 s on a re-check) |
+| Chunks | **19** | 32 |
+| Chunk text | **different** | identical to every earlier CPU run |
+
+**The GPU result is not a speed-up; it is a degraded parse.** The layout model failed to load on CUDA for every
+page ("FusedConv ... unsupported conv activation mode HardSigmoid" / "No attribute 'activation'"). RAGFlow logs
+that as a warning, parses without layout analysis, and still reports COMPLETED. GPU 1 memory rose only ~100 MB.
+
+Root cause: RAGFlow ships its DeepDoc models as `.ort` files already optimized for the CPU execution provider.
+det.ort, rec.ort and layout.ort contain CPU-only fused kernels (FusedConv); only tsr.ort is clean. The CUDA
+provider cannot run them, whatever the Go code does. GPU DeepDoc needs the original unoptimized `.onnx` models
+(not tested; their availability and input/output compatibility with the Go code are unverified).
+
+What did work on the GPU:
+- Memory: with Qwen + embedder loaded, GPU 0 10.7/15.4 GB and GPU 1 7.8/15.4 GB, about 7.6 GB free on GPU 1.
+  Qwen and ingestion fit together; switching Qwen off during ingestion is not needed on this hardware.
+- The bge-m3 embedder on GPU: no embedding timeouts (they had failed the CPU notebook).
+- The patched GPU ingestor loads the stock CUDA ORT and the CUDA/cuDNN libraries on Kaggle.
+
+Fixes made after this run (verified on CPU only; CPU chunks still identical, 32/32):
+- A model whose CUDA session cannot be created now falls back to CPU for that model (logged once), instead of
+  the page silently losing layout/OCR. The startup check only proves CUDA loads, not that each model runs on it.
+- Only the GPU ingestor sees `cuda`: the API also initialises DeepDoc, and the first launch failed because the
+  API (static CPU-only ORT) refused to start with `cuda`.
+
+Contention numbers from this run are not usable: the "during GPU parse" chat (4 s) ran after the degraded
+parse had already finished, and the idle one (22 s) included a cold prompt cache.
+
 ## Not covered
 
 - Oversized-upload limits (default `MAX_CONTENT_LENGTH` is 1 GB).

@@ -114,6 +114,20 @@ Every number below comes from a run in this session. Test scripts are in `kaggle
   - No extension: rejected.
   - A text file renamed `.pdf`: accepted at upload.
 
+### 5. Malformed input (21 requests to datasets, retrieval, chats, agents)
+
+- **Robust:** every request got a clean validation message in under 0.02 s. There were no crashes, hangs, panics or API restarts, and health stayed OK afterwards.
+- Inputs tried:
+  - empty and broken JSON,
+  - wrong types and nulls,
+  - a 1 MB name (rejected: limit 128),
+  - negative or huge paging and top_k (range-checked),
+  - fake and SQL-like IDs (permission error),
+  - a SQL-injection-style dataset name (stored literally; database intact).
+- **Weak spot: agent graphs are not validated at save time.**
+  - An agent whose Begin block points to itself was accepted on create (code 0).
+  - It fails only when run, with a misleading "Internal storage error while accessing the agent". The real cause is in `api.log`: `self-edge on "begin"`. No hang or CPU spin.
+
 ## Not covered
 
 - Oversized-upload limits (default `MAX_CONTENT_LENGTH` is 1 GB).

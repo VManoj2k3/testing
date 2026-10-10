@@ -136,6 +136,26 @@ Every number below comes from a run in this session. Test scripts are in `kaggle
 - **No data loss or duplicates:** exactly 60 chunks for 20 docs, and search works afterwards.
 - For a rollout, failed documents need monitoring and a re-parse job, or an operator.
 
+### 7. Chat and agents under concurrent load (Qwen3.8-27B, 2×T4, 4 parallel slots, 65k context)
+
+| Chat, users at once | 8 answers took | Typical / slowest answer | Errors | Correct |
+|---|---|---|---|---|
+| 1 | 146 s | 18 / 23 s | 0 | 7/8 |
+| 2 | 43 s | 6 / 17 s | 0 | 8/8 |
+| 4 | 39 s | 12 / 31 s | 0 | 7/8 |
+| 8 (more than the 4 slots) | 41 s | 23 / 41 s | 0 | 7/8 |
+
+| Agent (starter template), runs at once | 8 runs took | Typical / slowest | Correct |
+|---|---|---|---|
+| 1 | 162 s | 19 / 43 s | 4/8 |
+| 2 | 164 s | 35 / 87 s | 4/8 |
+| 4 | 146 s | 46 / 115 s | 4/8 |
+
+- **Chat holds up:** no errors and stable accuracy up to 8 concurrent users. Beyond the 4 slots, requests queue (slowest 41 s) rather than fail. The same 8 questions were reused per level, so llama.cpp's prompt cache flatters the later levels' speed.
+- **Agents hit a context limit, not a load limit.** The 4/8 is the same at 1, 2 and 4 runs at once. 3 of the 4 misses were Qwen rejecting the request: "request (~17,000 tokens) exceeds the context". Four parallel slots split the 65k context into about 16k per request, and one agent run (instructions, tool schemas, retrieved chunks) needs about 17k. **Parallel slots and context size must be sized together:** fewer slots, a bigger context, or fewer retrieved chunks.
+- **RAGFlow returns that model error as the answer text** ("**ERROR**: [GraphRunError] … status 400 …") rather than as an error event, so users would see raw errors as replies.
+- 1 genuine wrong answer: asked about the big model's heads, the agent quoted the base model's 8. The correct answer is 16.
+
 ## Not covered
 
 - Oversized-upload limits (default `MAX_CONTENT_LENGTH` is 1 GB).

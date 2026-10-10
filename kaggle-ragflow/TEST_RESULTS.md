@@ -61,6 +61,21 @@ Every number below comes from a run in this session. Test scripts are in `kaggle
 | **GitHub** | Not testable from this container: api.github.com is blocked by the network proxy (403). |
 | **Bitbucket** | Not tested. |
 
+## Stress checks (2026-10-10, one at a time, 4-CPU box, CPU embedder)
+
+### 1. Search and API under load (`ab`, one shared login)
+
+| Endpoint | 1 user | 5 users | 10 users | 25 users | Failures |
+|---|---|---|---|---|---|
+| Search (`POST /retrieval`), req/s | 4.7 | 5.6 | 6.8 | 6.5 | 0 |
+| Search median / slowest | 0.2 / 0.35 s | 0.8 / 1.3 s | 1.5 / 2.5 s | 3.8 / 4.9 s | |
+| List datasets, req/s | 181 | 629 | 431 | 557 | 0 |
+| Health check, req/s | 290 | 811 | 908 | 1353 | 39–56% non-200 |
+
+- **Search plateaus at about 6–7 req/s** and waits grow linearly. The bottleneck is the CPU embedder embedding each question: this box's limit, not RAGFlow's. No errors up to 25 concurrent users.
+- **RAGFlow bug: the health check reports false failures under concurrency.** With 25 parallel calls, 36 of 200 returned HTTP 500 "storage is not healthy" while MinIO was fine. Cause: `internal/storage/minio.go` `Health()` calls `client.HealthCheck()` on the shared MinIO client every time. That call fails with "health check is running" when another check is in flight (846 such warnings in `api.log`). Load balancers or Kubernetes probes would mark a busy instance unhealthy.
+- A first run seemed to show mixed or empty response bodies. That was my test (parallel curls sharing one stdout); with per-request files, all 200 bodies were valid. Retracted.
+
 ## Not covered
 
 - Oversized-upload limits (default `MAX_CONTENT_LENGTH` is 1 GB).

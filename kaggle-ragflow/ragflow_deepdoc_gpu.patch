@@ -1,0 +1,186 @@
+diff --git a/internal/deepdoc/native/device.go b/internal/deepdoc/native/device.go
+new file mode 100644
+index 0000000..e636a0c
+--- /dev/null
++++ b/internal/deepdoc/native/device.go
+@@ -0,0 +1,138 @@
++//go:build cgo
++
++package native
++
++// device.go — optional GPU (CUDA) execution for DeepDoc inference.
++//
++// Off by default: sessions stay CPU-only unless RAGFLOW_DEEPDOC_DEVICE=cuda.
++// CUDA needs a GPU build of ONNX Runtime, which is only shipped as a shared
++// library, so the server must be built WITHOUT the "static" tag and pointed at
++// that library with RAGFLOW_ORT_LIBRARY_PATH (CUDA 12 + cuDNN 9 libraries must
++// be on LD_LIBRARY_PATH). A static build ignores the library path.
++//
++// Every model input shape gets its own pooled session (see session_pool.go),
++// so each CUDA session gets a small, fixed memory cap and a non-growing arena;
++// otherwise dozens of idle sessions would each hold GPU memory. Inference is
++// still bounded by the process-wide gate (inference_limit.go), so with
++// RAGFLOW_DEEPDOC_INFERENCE_CONCURRENCY=1 at most one Run uses the GPU at a time.
++//
++//	RAGFLOW_DEEPDOC_DEVICE          cpu (default) | cuda
++//	RAGFLOW_DEEPDOC_CUDA_DEVICE_ID  GPU index (default 0)
++//	RAGFLOW_DEEPDOC_CUDA_MEM_MB     per-session GPU memory cap in MB (default 512)
++//	RAGFLOW_ORT_LIBRARY_PATH        path to libonnxruntime.so (non-static builds)
++
++import (
++	"fmt"
++	"os"
++	"strconv"
++	"strings"
++
++	ort "github.com/infiniflow/onnxruntime_go"
++)
++
++const (
++	envDeepDocDevice    = "RAGFLOW_DEEPDOC_DEVICE"
++	envCUDADeviceID     = "RAGFLOW_DEEPDOC_CUDA_DEVICE_ID"
++	envCUDAMemMB        = "RAGFLOW_DEEPDOC_CUDA_MEM_MB"
++	envORTLibraryPath   = "RAGFLOW_ORT_LIBRARY_PATH"
++	defaultCUDAMemLimit = 512
++)
++
++// useCUDA reports whether DeepDoc sessions should run on the GPU.
++func useCUDA() bool {
++	return strings.EqualFold(strings.TrimSpace(os.Getenv(envDeepDocDevice)), "cuda")
++}
++
++// DeviceName is the device DeepDoc inference was configured for, for logging.
++func DeviceName() string {
++	if useCUDA() {
++		return "cuda:" + cudaDeviceID()
++	}
++	return "cpu"
++}
++
++func cudaDeviceID() string {
++	if v := strings.TrimSpace(os.Getenv(envCUDADeviceID)); v != "" {
++		return v
++	}
++	return "0"
++}
++
++func cudaMemLimitBytes() (string, error) {
++	mb := defaultCUDAMemLimit
++	if v := strings.TrimSpace(os.Getenv(envCUDAMemMB)); v != "" {
++		n, err := strconv.Atoi(v)
++		if err != nil || n <= 0 {
++			return "", fmt.Errorf("invalid %s %q: must be a positive integer", envCUDAMemMB, v)
++		}
++		mb = n
++	}
++	return strconv.FormatInt(int64(mb)<<20, 10), nil
++}
++
++// externalORT reports whether ONNX Runtime comes from a stock shared library
++// (RAGFLOW_ORT_LIBRARY_PATH) rather than infiniflow's statically linked build.
++// Stock builds lack the GetInitializer* API extensions, so cross-session weight
++// sharing is skipped; on CUDA it would not help anyway, as each session copies
++// its weights to device memory.
++func externalORT() bool {
++	return strings.TrimSpace(os.Getenv(envORTLibraryPath)) != ""
++}
++
++// setORTLibraryPath points the binding at a shared ONNX Runtime library when
++// one is configured. Must run before ort.InitializeEnvironment.
++func setORTLibraryPath() {
++	if p := strings.TrimSpace(os.Getenv(envORTLibraryPath)); p != "" {
++		ort.SetSharedLibraryPath(p)
++	}
++}
++
++// probeDevice checks at startup that the requested device can actually be
++// used. Session errors are only warnings to the PDF parser (it carries on
++// without layout/OCR), so a broken CUDA setup would otherwise parse every
++// document silently degraded instead of failing.
++func probeDevice() error {
++	if !useCUDA() {
++		return nil
++	}
++	opts, err := ort.NewSessionOptions()
++	if err != nil {
++		return err
++	}
++	defer opts.Destroy()
++	if err := appendDeviceProvider(opts); err != nil {
++		return fmt.Errorf("DeepDoc device check failed: %w", err)
++	}
++	return nil
++}
++
++// appendDeviceProvider adds the CUDA execution provider to opts when the GPU is
++// requested. CUDA requested but unavailable is an error, not a silent CPU
++// fallback, so a misconfigured GPU deployment fails at the first session.
++func appendDeviceProvider(opts *ort.SessionOptions) error {
++	if !useCUDA() {
++		return nil
++	}
++	memLimit, err := cudaMemLimitBytes()
++	if err != nil {
++		return err
++	}
++	cuda, err := ort.NewCUDAProviderOptions()
++	if err != nil {
++		return fmt.Errorf("create CUDA provider options: %w", err)
++	}
++	defer cuda.Destroy()
++	if err := cuda.Update(map[string]string{
++		"device_id":              cudaDeviceID(),
++		"gpu_mem_limit":          memLimit,
++		"arena_extend_strategy":  "kSameAsRequested",
++		"cudnn_conv_algo_search": "HEURISTIC",
++	}); err != nil {
++		return fmt.Errorf("configure CUDA provider: %w", err)
++	}
++	if err := opts.AppendExecutionProviderCUDA(cuda); err != nil {
++		return fmt.Errorf("enable CUDA provider (%s=cuda; needs a non-static build, %s and CUDA 12/cuDNN 9 libraries): %w",
++			envDeepDocDevice, envORTLibraryPath, err)
++	}
++	return nil
++}
+diff --git a/internal/deepdoc/native/session.go b/internal/deepdoc/native/session.go
+index 036adbe..34873ed 100644
+--- a/internal/deepdoc/native/session.go
++++ b/internal/deepdoc/native/session.go
+@@ -63,9 +63,14 @@ var (
+ // running binary via dlopen(NULL).
+ func InitORT() error {
+ 	ortOnce.Do(func() {
++		setORTLibraryPath()
+ 		ortInitErr = ort.InitializeEnvironment()
++		if ortInitErr == nil {
++			ortInitErr = probeDevice()
++		}
+ 		if ortInitErr == nil {
+ 			ortReady = true
++			log.Printf("deepdoc: ONNX Runtime initialized, inference device=%s", DeviceName())
+ 		}
+ 	})
+ 	return ortInitErr
+@@ -121,6 +126,11 @@ var (
+ // malloc'd copies) alive in the cache. Returns (nil, nil) when the model has no
+ // initializers worth sharing.
+ func sharedWeights(modelPath, inName string, inShape []int64, outName string) (*weightSet, error) {
++	if externalORT() {
++		// GetInitializer* are infiniflow ORT build extensions: a stock (e.g. GPU)
++		// libonnxruntime.so has no such OrtApi entry and the call segfaults.
++		return nil, nil
++	}
+ 	weightMu.Lock()
+ 	defer weightMu.Unlock()
+ 	if ws, ok := weightCache[modelPath]; ok {
+@@ -261,6 +271,10 @@ func newSessionOptions(weights *weightSet) (*ort.SessionOptions, error) {
+ 		opts.Destroy()
+ 		return nil, err
+ 	}
++	if err := appendDeviceProvider(opts); err != nil {
++		opts.Destroy()
++		return nil, err
++	}
+ 	if weights != nil {
+ 		for i, v := range weights.vals {
+ 			if err := opts.AddInitializer(weights.names[i], v); err != nil {

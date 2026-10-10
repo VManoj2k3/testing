@@ -107,7 +107,8 @@ def start_embedder():
     files = list_repo_files("gpustack/bge-m3-GGUF")
     fname = next(f for pref in ("Q8_0", "FP16", "F16") for f in files if pref in f and f.endswith(".gguf"))
     model = hf_hub_download("gpustack/bge-m3-GGUF", fname)
-    p = subprocess.Popen([server, "-m", model, "--embedding", "--pooling", "cls", "-c", "8192", "-ub", "8192",
+    p = subprocess.Popen([server, "-m", model, "--embedding", "--pooling", "cls", "-c", "8192", "-ub", "4096", "-b", "4096", "-np", "1",
+                          "-t", str(os.cpu_count()),  # as local_up.sh: -ub 8192 + default slots timed out RAGFlow's embed calls on Kaggle CPUs
                           "--host", "127.0.0.1", "--port", str(EMBED_PORT), "--alias", "bge-m3"],
                          cwd=os.path.dirname(server),
                          stdout=open("/tmp/embedder.log", "w"), stderr=subprocess.STDOUT)

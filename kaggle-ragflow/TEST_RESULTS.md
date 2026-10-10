@@ -128,6 +128,14 @@ Every number below comes from a run in this session. Test scripts are in `kaggle
   - An agent whose Begin block points to itself was accepted on create (code 0).
   - It fails only when run, with a misleading "Internal storage error while accessing the agent". The real cause is in `api.log`: `self-edge on "begin"`. No hang or CPU spin.
 
+### 6. Service failure: Elasticsearch killed mid-ingestion (20 docs, 16 done / 4 running)
+
+- The 4 in-flight documents **failed fast with a clear error** ("insert chunk batch … after 3 attempts … connection refused", with partial-write compensation). The 16 completed ones were unaffected.
+- The health check correctly showed `doc_engine: nok` during the 1-minute outage.
+- **No automatic retry after recovery:** the 4 stayed FAILED once Elasticsearch was back. A manual re-parse completed them in 20 s.
+- **No data loss or duplicates:** exactly 60 chunks for 20 docs, and search works afterwards.
+- For a rollout, failed documents need monitoring and a re-parse job, or an operator.
+
 ## Not covered
 
 - Oversized-upload limits (default `MAX_CONTENT_LENGTH` is 1 GB).

@@ -7,7 +7,7 @@ ingestor idle and again while a GPU parse is running (contention).
 
 Usage: python3 gpu_bench.py <app url> <email> <pw> <control url> <secret> <pdf> [question]
 """
-import json, sys, threading, time, urllib.request
+import json, sys, threading, time, urllib.error, urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -19,7 +19,15 @@ import feature_matrix as fm  # noqa: E402
 
 def control(method, path):
     req = urllib.request.Request(CTRL + path, method=method, headers={"X-Kill-Secret": SECRET})
-    return urllib.request.urlopen(req, timeout=180).read().decode()
+    try:
+        return urllib.request.urlopen(req, timeout=180).read().decode()
+    except urllib.error.HTTPError as e:
+        if method != "POST" or e.code != 502:
+            raise
+        # The ~25 s ingestor restart completes but its reply can be lost in the Cloudflare tunnel (502).
+        # Give the restart time to finish; the device is then confirmed from GPU memory during the parse.
+        time.sleep(45)
+        return f"(reply lost: HTTP 502; waited 45 s for the restart)\n{control('GET', '/gpu')}"
 
 
 def chunks(ds, doc):
@@ -52,7 +60,9 @@ def parse_on(device):
     done.set()
     st = [(x.get("ingestion_status"), x.get("chunk_count")) for x in docs]
     print(f"{device}: {secs:.0f}s {st}")
-    print(f"{device}: GPU memory samples (first, peak-ish last): {mem[:1]} ... {mem[-2:]}")
+    gpu1 = [int(m.split("|")[1].split(",")[1].split()[0]) for m in mem if m.count("|") == 1 and "MiB" in m]
+    print(f"{device}: GPU 1 memory during parse: min {min(gpu1, default=0)} MiB, max {max(gpu1, default=0)} MiB "
+          f"({len(gpu1)} samples)")
     return ds, doc, secs, st
 
 

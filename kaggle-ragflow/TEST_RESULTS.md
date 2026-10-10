@@ -76,6 +76,17 @@ Every number below comes from a run in this session. Test scripts are in `kaggle
 - **RAGFlow bug: the health check reports false failures under concurrency.** With 25 parallel calls, 36 of 200 returned HTTP 500 "storage is not healthy" while MinIO was fine. Cause: `internal/storage/minio.go` `Health()` calls `client.HealthCheck()` on the shared MinIO client every time. That call fails with "health check is running" when another check is in flight (846 such warnings in `api.log`). Load balancers or Kubernetes probes would mark a busy instance unhealthy.
 - A first run seemed to show mixed or empty response bodies. That was my test (parallel curls sharing one stdout); with per-request files, all 200 bodies were valid. Retracted.
 
+### 2. Bulk ingestion (100 small text files, uploaded and parsed at once)
+
+| Ingestor workers | Parsed | Failed | Time | Docs/min | Chunks |
+|---|---|---|---|---|---|
+| 1 (RAGFlow default) | 100 | 0 | 317 s | ~19 | 299 |
+| 4 (`RAGFLOW_INGESTOR_MAX_CONCURRENT_WORKERS=4`) | 100 | 0 | 260 s | ~23 | 299 |
+
+- **RAGFlow parses one document at a time by default** (`max_concurrent_workers: 1` in `conf/service_conf.yaml`). A company rollout should raise it.
+- With 4 workers only 18% faster here, because the single-slot CPU embedder becomes the bottleneck. This box's limit; a GPU embedder should scale better (not measured).
+- Peak memory: ingestor 448 MB, embedder 1.8 GB, Elasticsearch 2.6 GB, API 607 MB. Nothing failed or leaked over the run.
+
 ## Not covered
 
 - Oversized-upload limits (default `MAX_CONTENT_LENGTH` is 1 GB).

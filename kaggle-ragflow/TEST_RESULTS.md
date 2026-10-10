@@ -87,6 +87,15 @@ Every number below comes from a run in this session. Test scripts are in `kaggle
 - With 4 workers only 18% faster here, because the single-slot CPU embedder becomes the bottleneck. This box's limit; a GPU embedder should scale better (not measured).
 - Peak memory: ingestor 448 MB, embedder 1.8 GB, Elasticsearch 2.6 GB, API 607 MB. Nothing failed or leaked over the run.
 
+### 3. One large PDF (220 generated pages: headings, text, a table every 10 pages)
+
+- **Parsed successfully:** 205 chunks in 653 s (~3 s/page, default single worker, CPU only). No errors.
+- **Memory:** the ingestor peaked at 3.2 GB (vs 448 MB for plain text), because PDF layout analysis dominates. Embedder 1.9 GB, Elasticsearch 2.6 GB. Box total about 6.4 GB used of 16.
+- **Whole file searchable:** table rows from page 190 are retrievable.
+- **Quality notes:**
+  - Adjacent table cells can merge in the extracted text (`P190-4 | 806 | ms` → `P190-4806ms`), which can mislead number lookups.
+  - Search is semantic, so an exact label query ("Chapter 197") returned the neighbouring chapter's chunk.
+
 ## Not covered
 
 - Oversized-upload limits (default `MAX_CONTENT_LENGTH` is 1 GB).

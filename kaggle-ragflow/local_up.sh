@@ -15,6 +15,10 @@ bash deps_ragflow.sh status
 if ! curl -s -m 5 http://127.0.0.1:9380/api/v1/system/healthz | grep -q '"status":"ok"'; then
   bash run_ragflow.sh start </dev/null 2>&1 | tail -1
 fi
+if [ "$(curl -s -o /dev/null -w '%{http_code}' -m 5 http://127.0.0.1/)" != 200 ]; then
+  nginx </dev/null >/dev/null 2>&1 || nginx -s reload </dev/null >/dev/null 2>&1 || true   # web UI was not served after a restart
+fi
+echo "web:      $(curl -s -o /dev/null -w '%{http_code}' -m 5 http://127.0.0.1/)"
 if ! curl -s -m 5 http://127.0.0.1:8092/health | grep -q ok; then
   # -ub 4096: an 8192 micro-batch was OOM-killed (~9 GB) on the 'one' chunking method.
   nohup "$LLAMA_SERVER" -m "$BGE_M3_GGUF" --embedding --pooling cls -c 4096 -ub 4096 -b 4096 -np 1 \

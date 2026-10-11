@@ -64,11 +64,12 @@ mkdir -p /opt/mjml && cp docker/mjml/server.js /opt/mjml/ && (cd /opt/mjml && np
 # SearXNG (web search) from source in a venv, with FleetQ's settings.yml (JSON output on, limiter off)
 apt-get install -y -qq --no-install-recommends python3-venv python3-dev build-essential libxml2-dev libxslt1-dev zlib1g-dev >/dev/null
 rm -rf /opt/searxng && git clone -q --depth 1 https://github.com/searxng/searxng /opt/searxng
-python3 -m venv /opt/searxng/venv && /opt/searxng/venv/bin/pip install -q -U pip setuptools wheel pyyaml msgspec
-(cd /opt/searxng && venv/bin/pip install -q --use-pep517 --no-build-isolation -e .)
+mkvenv() { python3 -m venv --without-pip "$1" && curl -fsSL https://bootstrap.pypa.io/get-pip.py | "$1/bin/python" - -q; }   # Kaggle's ensurepip is broken
+mkvenv /opt/searxng/venv && /opt/searxng/venv/bin/pip install -q -U pip setuptools wheel pyyaml msgspec
+(cd /opt/searxng && /opt/searxng/venv/bin/pip install -q --use-pep517 --no-build-isolation -e .)
 SXKEY=$(openssl rand -hex 16); sed "s|\${SEARXNG_SECRET_KEY:-[^}]*}|$SXKEY|" docker/searxng/settings.yml > /opt/searxng/settings.yml
 # browserless-compatible shim on Playwright Chromium (FleetQ only calls /screenshot, /content, /pdf)
-python3 -m venv /opt/browserless && /opt/browserless/bin/pip install -q playwright && /opt/browserless/bin/playwright install --with-deps chromium >/dev/null
+mkvenv /opt/browserless && /opt/browserless/bin/pip install -q playwright && /opt/browserless/bin/playwright install --with-deps chromium >/dev/null
 BLTOKEN=$(openssl rand -hex 16); echo "$BLTOKEN" > /opt/browserless/token
 setenv MJML_SERVER_URL http://127.0.0.1:15500; setenv SEARXNG_URL http://127.0.0.1:8888; setenv WEB_SEARCH_DRIVER searxng
 setenv BROWSERLESS_URL http://127.0.0.1:3000; setenv BROWSERLESS_TOKEN "$BLTOKEN"

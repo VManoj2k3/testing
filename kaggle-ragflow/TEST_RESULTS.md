@@ -246,6 +246,34 @@ Fixes made after this run (verified on CPU only; CPU chunks still identical, 32/
 Contention numbers from this run are not usable: the "during GPU parse" chat (4 s) ran after the degraded
 parse had already finished, and the idle one (22 s) included a cold prompt cache.
 
+## Vision with Qwen3.8 (2026-10-11, Kaggle 2x T4)
+
+Qwen3.8-27B ships a vision projector (`mmproj-F16.gguf`, 0.93 GB). The GPU notebook now starts llama-server with
+`--mmproj`, and `VISION=1 configure_models.sh` registers Qwen as chat **and** image2text (tenant `img2txt_id`).
+GPU memory with the projector: GPU 0 11.8/15.4 GB, GPU 1 7.8/15.4 GB.
+
+Test: a drawn block diagram (Wheel sensor -> Brake ECU -> Hydraulic pump, arrows labelled CAN 500k / PWM).
+
+| Setup | Parse time | Chunk text | Answer to "what feeds / what does the Brake ECU drive?" |
+|---|---|---|---|
+| Built-in `picture` method (OCR only) | 5 s | just the words: `PWM / CAN 500k / Wheelsensor / Hydraulic pump / BrakeECU` | either "not detailed", or a **lucky guess** from word order (not grounded) |
+| Custom pipeline with `enable_vision_enhancement` | **31 s** (~26 s per image for the VLM call) | OCR words **plus** an accurate description: direction of each arrow, labels, CAN 500 kbit/s, PWM | correct and grounded: wheel sensor -> CAN 500k -> Brake ECU -> PWM -> hydraulic pump |
+
+How to switch it on (found the hard way):
+- Setting the default vision model is **not enough**. Images only get a VLM description when the Parser step has
+  `enable_vision_enhancement: true` (`internal/ingestion/component/media_dispatch.go:131`).
+- A per-document `parser_config` cannot set it. Overrides only accept params the built-in template already has
+  (`internal/ingestion/pipeline/pipeline_params.go:43-60`), and the built-in templates do not have it, so it is
+  **silently dropped**. Setting `image.parse_method` to the model id did nothing for images either.
+- What works: a **custom pipeline** (`dataflow_canvas`) copied from the picture template with
+  `enable_vision_enhancement: true`, attached to the document with `parse_type: 2, pipeline_id`. In the UI this is
+  the pipeline editor's "Enable vision enhancement" switch.
+- Do **not** add a top-level `vlm` key to the Parser params. It is not in the Parser's skip list (`parser.go:153`):
+  the run then completes with **0 chunks and no error**. Without it, the tenant's default image2text model is used.
+
+Not yet measured: figures inside PDFs (vision enhancement on the PDF route), full-page VLM parsing, and accuracy on
+dense tables or real engineering drawings.
+
 ## Not covered
 
 - Oversized-upload limits (default `MAX_CONTENT_LENGTH` is 1 GB).

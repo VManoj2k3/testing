@@ -58,6 +58,22 @@ php artisan storage:link -q || true
 php artisan config:cache -q && php artisan route:cache -q || true
 chown -R www-data:www-data storage bootstrap/cache
 
+step "sidecars: mjml, searxng, browserless shim (native, no Docker)"
+# mjml: FleetQ's own docker/mjml server.js, run with node (email template rendering)
+mkdir -p /opt/mjml && cp docker/mjml/server.js /opt/mjml/ && (cd /opt/mjml && npm init -y >/dev/null && npm install --no-audit --no-fund --loglevel=error mjml express)
+# SearXNG (web search) from source in a venv, with FleetQ's settings.yml (JSON output on, limiter off)
+apt-get install -y -qq --no-install-recommends python3-venv python3-dev build-essential libxml2-dev libxslt1-dev zlib1g-dev >/dev/null
+rm -rf /opt/searxng && git clone -q --depth 1 https://github.com/searxng/searxng /opt/searxng
+python3 -m venv /opt/searxng/venv && /opt/searxng/venv/bin/pip install -q -U pip setuptools wheel pyyaml msgspec
+(cd /opt/searxng && venv/bin/pip install -q --use-pep517 --no-build-isolation -e .)
+SXKEY=$(openssl rand -hex 16); sed "s|\${SEARXNG_SECRET_KEY:-[^}]*}|$SXKEY|" docker/searxng/settings.yml > /opt/searxng/settings.yml
+# browserless-compatible shim on Playwright Chromium (FleetQ only calls /screenshot, /content, /pdf)
+python3 -m venv /opt/browserless && /opt/browserless/bin/pip install -q playwright && /opt/browserless/bin/playwright install --with-deps chromium >/dev/null
+BLTOKEN=$(openssl rand -hex 16); echo "$BLTOKEN" > /opt/browserless/token
+setenv MJML_SERVER_URL http://127.0.0.1:15500; setenv SEARXNG_URL http://127.0.0.1:8888; setenv WEB_SEARCH_DRIVER searxng
+setenv BROWSERLESS_URL http://127.0.0.1:3000; setenv BROWSERLESS_TOKEN "$BLTOKEN"
+php artisan config:cache -q
+
 step "nginx + php-fpm"
 cat > /etc/nginx/sites-enabled/default <<NGINX
 server {

@@ -11,6 +11,7 @@ MAX_RUNTIME_MIN = int("__MAX_RUNTIME_MIN__")
 ADMIN_EMAIL, ADMIN_PASS = "__ADMIN_EMAIL__", "__ADMIN_PASS__"
 QWEN_TOPIC, QWEN_KEY, QWEN_MODEL = "__QWEN_TOPIC__", "__QWEN_KEY__", "__QWEN_MODEL__"
 SETUP = base64.b64decode("__SETUP_B64__").decode()
+SHIM = base64.b64decode("__SHIM_B64__").decode()
 SRC, WEB_PORT, KILL_PORT = "/opt/fleetq", 80, 8081 + 1000
 procs = []
 
@@ -144,6 +145,8 @@ def main():
     notify(f"TUNNEL {app_url}")
     with open("/tmp/setup_fleetq.sh", "w") as f:
         f.write(SETUP)
+    with open("/tmp/browserless_shim.py", "w") as f:
+        f.write(SHIM)
     t0 = time.time()
     sh_steps("bash /tmp/setup_fleetq.sh", 3600,
              env={"APP_URL": app_url, "ADMIN_EMAIL": ADMIN_EMAIL, "ADMIN_PASS": ADMIN_PASS, "FLEETQ_SRC": SRC})
@@ -154,9 +157,22 @@ def main():
         p = subprocess.Popen(["su", "-s", "/bin/bash", "www-data", "-c", f"cd {SRC} && {cmd}"],
                              stdout=open(f"/tmp/{name}.log", "w"), stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
         procs.append(p)
-    time.sleep(10)
+    tok = open("/opt/browserless/token").read().strip()
+    for name, cmd in [("mjml", "cd /opt/mjml && exec node server.js"),
+                      ("searxng", "cd /opt/searxng && SEARXNG_SETTINGS_PATH=/opt/searxng/settings.yml exec venv/bin/python -m searx.webapp"),
+                      ("browserless", f"BROWSERLESS_TOKEN={tok} exec /opt/browserless/bin/python /tmp/browserless_shim.py 3000")]:
+        p = subprocess.Popen(["bash", "-c", cmd], stdout=open(f"/tmp/{name}.log", "w"), stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL)
+        procs.append(p)
+    names = ["horizon", "scheduler", "reverb", "mjml", "searxng", "browserless"]
+    time.sleep(20)
     notify("WORKERS " + " ".join(f"{n}:{'up' if p.poll() is None else 'DIED ' + open(f'/tmp/{n}.log').read()[-200:]}"
-                                 for n, p in zip(["horizon", "scheduler", "reverb"], procs[-3:])))
+                                 for n, p in zip(names, procs[-6:])))
+    checks = {"mjml": "curl -s -m 10 http://127.0.0.1:15500/healthcheck",
+              "searxng": "curl -s -m 30 'http://127.0.0.1:8888/search?q=autosar&format=json' | head -c 80",
+              "browserless": f"curl -s -m 60 -X POST -H 'Authorization: Token {tok}' http://127.0.0.1:3000/content "
+                             "-d '{\"url\":\"https://example.com\"}'" " | head -c 80"}
+    notify("SIDECARS " + " | ".join(f"{k}: {sh(v + ' || true').strip()[:90]}" for k, v in checks.items()))
     notify("CHECK login " + sh("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/login").strip()
            + " register " + sh("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/register").strip())
     notify(f"APP_URL {app_url}")

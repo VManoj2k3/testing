@@ -15,7 +15,7 @@ printf '%s\n%s\n' "$ADMIN_EMAIL" "$ADMIN_PASS" > "$STATE/login"; chmod 600 "$STA
 sed -e "s|__SECRET__|$SECRET|" -e "s|__NTFY_TOPIC__|$TOPIC|" \
     -e "s|__ADMIN_EMAIL__|$ADMIN_EMAIL|" -e "s|__ADMIN_PASS__|$ADMIN_PASS|" \
     -e "s|__QWEN_TOPIC__|$(cat $Q/topic)|" -e "s|__QWEN_KEY__|$(cat $Q/secret)|" -e "s|__QWEN_MODEL__|${QWEN_MODEL:-qwen3.8-27b}|" \
-    -e "s|__SETUP_B64__|$(base64 -w0 setup_fleetq.sh)|" \
+    -e "s|__SETUP_B64__|$(base64 -w0 setup_fleetq.sh)|" -e "s|__SHIM_B64__|$(base64 -w0 browserless_shim.py)|" \
     -e "s|__MAX_RUNTIME_MIN__|${MAX_RUNTIME_MIN:-300}|" fleetq_kernel.py > "$STATE/kernel/fleetq_kernel.py"
 grep -q "__[A-Z_]*__" "$STATE/kernel/fleetq_kernel.py" && { echo "unfilled placeholder:"; grep -o "__[A-Z_]*__" "$STATE/kernel/fleetq_kernel.py" | sort -u; exit 1; }
 cat > "$STATE/kernel/kernel-metadata.json" <<JSON

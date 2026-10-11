@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Registers Qwen (chat) and the local bge-m3 (embedding) as OpenAI-API-Compatible providers
 # in a running RAGFlow and makes them the account's defaults, via RAGFlow's own API.
-# Usage: configure_models.sh <ragflow base url> <email> <password> <qwen /v1 url> <qwen api key> [embed /v1 url] [embed api key]
+# Usage: [VISION=1] configure_models.sh <ragflow base url> <email> <password> <qwen /v1 url> <qwen api key> [embed /v1 url] [embed api key]
 # The embed URL is from RAGFlow's point of view (default: the bge-m3 server beside it on :8092).
 set -euo pipefail
 BASE=$1 EMAIL=$2 PW=$3 QWEN_URL=$4 QWEN_KEY=$5 EMBED_URL=${6:-http://127.0.0.1:8092/v1}
@@ -19,10 +19,14 @@ J() { curl -s -m 60 -X "$1" -H "Authorization: $TOK" -H 'Content-Type: applicati
 
 echo "provider:  $(J PUT /providers "{\"provider_name\":\"$P\"}")"
 echo "qwen:      $(J POST /providers/$P/instances "{\"instance_name\":\"kaggle-qwen\",\"api_key\":\"$QWEN_KEY\",\"base_url\":\"$QWEN_URL\"}")"
-echo "           $(J POST /providers/$P/instances/kaggle-qwen/models '{"model_name":"qwen3.8-27b","model_type":["chat"],"max_tokens":65536}')"
+# VISION=1: Qwen was started with its mmproj, so register it for image-to-text too (figure descriptions,
+# image uploads, vision PDF parsing) and make it the account's default img2txt model.
+QTYPES='["chat"]'; IMG2TXT=""
+if [ "${VISION:-0}" = 1 ]; then QTYPES='["chat","image2text"]'; IMG2TXT="qwen3.8-27b@kaggle-qwen@$P"; fi
+echo "           $(J POST /providers/$P/instances/kaggle-qwen/models "{\"model_name\":\"qwen3.8-27b\",\"model_type\":$QTYPES,\"max_tokens\":65536}")"
 echo "bge-m3:    $(J POST /providers/$P/instances "{\"instance_name\":\"local-bge-m3\",\"api_key\":\"$EMBED_KEY\",\"base_url\":\"$EMBED_URL\"}")"
 echo "           $(J POST /providers/$P/instances/local-bge-m3/models '{"model_name":"bge-m3","model_type":["embedding"],"max_tokens":8192}')"
 TID=$(J GET /users/me/models | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["tenant_id"])')
 # asr_id and img2txt_id are required by the API even when unused.
-echo "defaults:  $(J PATCH /users/me/models "{\"tenant_id\":\"$TID\",\"llm_id\":\"qwen3.8-27b@kaggle-qwen@$P\",\"embd_id\":\"bge-m3@local-bge-m3@$P\",\"asr_id\":\"\",\"img2txt_id\":\"\",\"rerank_id\":\"\",\"tts_id\":\"\"}")"
-J GET /users/me/models | python3 -c 'import sys,json;d=json.load(sys.stdin)["data"];print("now:       llm_id =",d["llm_id"],"| embd_id =",d["embd_id"])'
+echo "defaults:  $(J PATCH /users/me/models "{\"tenant_id\":\"$TID\",\"llm_id\":\"qwen3.8-27b@kaggle-qwen@$P\",\"embd_id\":\"bge-m3@local-bge-m3@$P\",\"asr_id\":\"\",\"img2txt_id\":\"$IMG2TXT\",\"rerank_id\":\"\",\"tts_id\":\"\"}")"
+J GET /users/me/models | python3 -c 'import sys,json;d=json.load(sys.stdin)["data"];print("now:       llm_id =",d["llm_id"],"| embd_id =",d["embd_id"],"| img2txt_id =",d.get("img2txt_id"))'

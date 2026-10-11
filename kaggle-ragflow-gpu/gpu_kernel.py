@@ -153,10 +153,15 @@ def download_models(out):
         if not repo:
             raise RuntimeError(f"no {QUANT} GGUF for {MODEL_REPO}")
         out["qwen"] = [hf_hub_download(repo, f) for f in files][0]
+        # Vision projector (Qwen3.8 is multimodal); without it llama-server is text-only.
+        mm = sorted(f for f in list_repo_files(repo) if "mmproj" in f.lower() and f.endswith(".gguf"))
+        mm = [f for f in mm if "F16" in f and "BF16" not in f] or mm  # T4 has no bf16 support
+        out["mmproj"] = hf_hub_download(repo, mm[0]) if mm else ""
         ef = list_repo_files("gpustack/bge-m3-GGUF")
         out["embed"] = hf_hub_download("gpustack/bge-m3-GGUF",
                                        next(f for p in ("Q8_0", "FP16", "F16") for f in ef if p in f and f.endswith(".gguf")))
-        notify(f"MODELS downloaded: {os.path.basename(out['qwen'])}, {os.path.basename(out['embed'])}")
+        notify(f"MODELS downloaded: {os.path.basename(out['qwen'])}, {os.path.basename(out['mmproj']) or 'no mmproj'}, "
+               f"{os.path.basename(out['embed'])}")
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"
 
@@ -193,15 +198,16 @@ def setup_gpu_ort(cuda_root):
     notify("ORT_GPU " + sh("ls /opt/ortgpu/lib | tr '\\n' ' '; ls " + " ".join(libdirs[2:]) +
                            " 2>/dev/null | grep -oE 'lib(cudnn|cublas|cudart)\\.so\\.[0-9]+' | sort -u | tr '\\n' ' '")[:400])
 
-def start_llama(qwen, embed):
+def start_llama(qwen, embed, mmproj=""):
     log = "/tmp/qwen.log"
     q = subprocess.Popen(["/tmp/llama.cpp/build/bin/llama-server", "-m", qwen, "--host", "127.0.0.1",
                           "--port", str(LLAMA_PORT), "-ngl", "99", "--split-mode", "layer", "--tensor-split", TENSOR_SPLIT,
-                          "-c", str(CTX), "-np", str(NP), "--jinja", "--api-key", SECRET, "--alias", ALIAS],
+                          "-c", str(CTX), "-np", str(NP), "--jinja", "--api-key", SECRET, "--alias", ALIAS,
+                          *(["--mmproj", mmproj] if mmproj else [])],
                          stdout=open(log, "w"), stderr=subprocess.STDOUT)
     procs.append(q)
     wait_http(f"http://127.0.0.1:{LLAMA_PORT}/health", q, log)
-    notify(f"GPU after Qwen: {gpu_mem()}")
+    notify(f"GPU after Qwen{' + vision projector' if mmproj else ' (text only)'}: {gpu_mem()}")
     elog = "/tmp/embedder.log"
     e = subprocess.Popen(["/tmp/llama.cpp/build/bin/llama-server", "-m", embed, "--embedding", "--pooling", "cls",
                           "-c", "8192", "-ub", "4096", "-b", "4096", "-np", "2", "-ngl", "99", "--main-gpu", "0",
@@ -249,7 +255,7 @@ def main():
     dl.join(timeout=3600)
     if "error" in models or "qwen" not in models:
         raise RuntimeError("model download: " + models.get("error", "timed out"))
-    qwen = start_llama(models["qwen"], models["embed"])
+    qwen = start_llama(models["qwen"], models["embed"], models.get("mmproj", ""))
 
     # Ingestor starts on the GPU; if CUDA can't be used it refuses to start, so fall back to CPU and say so.
     try:

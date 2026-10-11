@@ -75,6 +75,14 @@ def shutdown(reason, error=False):
     os._exit(1 if error else 0)
 
 class KillHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        # Secret-protected diagnostics: last lines of the Laravel log and worker logs.
+        if self.path.startswith("/log") and self.headers.get("X-Kill-Secret") == SECRET:
+            out = subprocess.run(f"tail -n 150 {SRC}/storage/logs/laravel.log; for f in /tmp/horizon.log /tmp/reverb.log; "
+                                 "do echo \"== $f\"; tail -n 20 $f; done", shell=True, capture_output=True, text=True).stdout
+            self.send_response(200); self.end_headers(); self.wfile.write(out.encode(errors="replace"))
+        else:
+            self.send_response(403); self.end_headers()
     def do_POST(self):
         if self.path == "/shutdown" and self.headers.get("X-Kill-Secret") == SECRET:
             self.send_response(200); self.end_headers(); self.wfile.write(b"bye\n")
@@ -178,11 +186,17 @@ def main():
     notify(f"APP_URL {app_url}")
     notify("READY fleetq")
     connect_qwen()
-    while True:
-        time.sleep(60)
-        tail = sh(f"tail -n 3 {SRC}/storage/logs/laravel.log 2>/dev/null | grep -iE 'ERROR|CRITICAL' || true").strip()
-        if tail:
-            notify("LARAVEL " + tail[-500:])
+    log, pos = f"{SRC}/storage/logs/laravel.log", 0
+    while True:                                  # forward each new Laravel error entry (header line only)
+        time.sleep(30)
+        try:
+            with open(log, errors="replace") as f:
+                f.seek(pos); chunk = f.read(); pos = f.tell()
+        except FileNotFoundError:
+            continue
+        for line in chunk.splitlines():
+            if re.match(r"^\[[^\]]+\] \w+\.(ERROR|CRITICAL|ALERT|EMERGENCY):", line):
+                notify("LARAVEL " + line[:700])
 
 if __name__ == "__main__":
     signal.signal(signal.SIGTERM, lambda *a: shutdown("SIGTERM"))

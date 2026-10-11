@@ -58,21 +58,29 @@ php artisan storage:link -q || true
 php artisan config:cache -q && php artisan route:cache -q || true
 chown -R www-data:www-data storage bootstrap/cache
 
-step "sidecars: mjml, searxng, browserless shim (native, no Docker)"
-# mjml: FleetQ's own docker/mjml server.js, run with node (email template rendering)
-mkdir -p /opt/mjml && cp docker/mjml/server.js /opt/mjml/ && (cd /opt/mjml && npm init -y >/dev/null && npm install --no-audit --no-fund --loglevel=error mjml express)
-# SearXNG (web search) from source in a venv, with FleetQ's settings.yml (JSON output on, limiter off)
-apt-get install -y -qq --no-install-recommends python3-venv python3-dev build-essential libxml2-dev libxslt1-dev zlib1g-dev >/dev/null
-rm -rf /opt/searxng && git clone -q --depth 1 https://github.com/searxng/searxng /opt/searxng
-mkvenv() { python3 -m venv --without-pip "$1" && curl -fsSL https://bootstrap.pypa.io/get-pip.py | "$1/bin/python" - -q; }   # Kaggle's ensurepip is broken
-mkvenv /opt/searxng/venv && /opt/searxng/venv/bin/pip install -q -U pip setuptools wheel pyyaml msgspec
-(cd /opt/searxng && /opt/searxng/venv/bin/pip install -q --use-pep517 --no-build-isolation -e .)
-SXKEY=$(openssl rand -hex 16); sed "s|\${SEARXNG_SECRET_KEY:-[^}]*}|$SXKEY|" docker/searxng/settings.yml > /opt/searxng/settings.yml
+step "sidecars: mjml, searxng, browserless shim (native, no Docker; a failure is reported, not fatal)"
+# Each sidecar installs in its own bash -e process so one failure can't take the app down; .env only
+# points FleetQ at the sidecars that installed.
+sidecar() { local name=$1; shift; if bash -euo pipefail -c "$*" >"/tmp/sidecar-$name.log" 2>&1; then echo "sidecar $name: installed";
+  else echo "=== WARN sidecar $name failed: $(tail -c 300 /tmp/sidecar-$name.log | tr '\n' ' ')"; return 1; fi; }
+MKVENV='mkvenv() { python3 -m venv --without-pip "$1" && curl -fsSL https://bootstrap.pypa.io/get-pip.py | "$1/bin/python" - -q; }'  # Kaggle's ensurepip is broken
+# mjml: FleetQ's own docker/mjml/server.js, run with node (email template rendering)
+sidecar mjml "mkdir -p /opt/mjml && cp $SRC/docker/mjml/server.js /opt/mjml/ && cd /opt/mjml && npm init -y >/dev/null \
+  && npm install --no-audit --no-fund --loglevel=error mjml express" && setenv MJML_SERVER_URL http://127.0.0.1:15500
+# SearXNG (web search) from source, with FleetQ's settings.yml (JSON output on, limiter off). Order verified locally:
+# requirements first, then the editable install without build isolation.
+SXKEY=$(openssl rand -hex 16)
+sidecar searxng "$MKVENV; rm -rf /opt/searxng && git clone -q --depth 1 https://github.com/searxng/searxng /opt/searxng \
+  && mkvenv /opt/searxng/venv && /opt/searxng/venv/bin/pip install -q -U pip setuptools wheel pyyaml msgspec \
+  && /opt/searxng/venv/bin/pip install -q -r /opt/searxng/requirements.txt \
+  && cd /opt/searxng && /opt/searxng/venv/bin/pip install -q --use-pep517 --no-build-isolation -e ." \
+  && sed "s|\${SEARXNG_SECRET_KEY:-[^}]*}|$SXKEY|" docker/searxng/settings.yml > /opt/searxng/settings.yml \
+  && { setenv SEARXNG_URL http://127.0.0.1:8888; setenv WEB_SEARCH_DRIVER searxng; }
 # browserless-compatible shim on Playwright Chromium (FleetQ only calls /screenshot, /content, /pdf)
-mkvenv /opt/browserless && /opt/browserless/bin/pip install -q playwright && /opt/browserless/bin/playwright install --with-deps chromium >/dev/null
-BLTOKEN=$(openssl rand -hex 16); echo "$BLTOKEN" > /opt/browserless/token
-setenv MJML_SERVER_URL http://127.0.0.1:15500; setenv SEARXNG_URL http://127.0.0.1:8888; setenv WEB_SEARCH_DRIVER searxng
-setenv BROWSERLESS_URL http://127.0.0.1:3000; setenv BROWSERLESS_TOKEN "$BLTOKEN"
+BLTOKEN=$(openssl rand -hex 16)
+sidecar browserless "$MKVENV; mkvenv /opt/browserless && /opt/browserless/bin/pip install -q playwright \
+  && /opt/browserless/bin/playwright install --with-deps chromium && echo $BLTOKEN > /opt/browserless/token" \
+  && { setenv BROWSERLESS_URL http://127.0.0.1:3000; setenv BROWSERLESS_TOKEN "$BLTOKEN"; }
 php artisan config:cache -q
 
 step "nginx + php-fpm"

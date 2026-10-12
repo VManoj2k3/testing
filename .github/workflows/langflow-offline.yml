@@ -1,0 +1,94 @@
+# Langflow with a local model on Windows and Linux: install, start a CPU llama.cpp server with a
+# small Qwen model, start Langflow with the offline settings, then build and run a template agent
+# and a from-scratch agent through the API. Internet is used only to install and download.
+name: langflow-offline
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/sharp-mendel-j7lo5u]
+    paths: [langflow-offline/**, .github/workflows/langflow-offline.yml]
+permissions:
+  contents: read
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    env:
+      LANGFLOW_VERSION: 1.12.5
+      MODEL_URL: https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Langflow
+        run: |
+          python -m pip install -q uv
+          python -m venv lfvenv
+          if [ -d lfvenv/Scripts ]; then echo "LFBIN=$PWD/lfvenv/Scripts" >> "$GITHUB_ENV"; else echo "LFBIN=$PWD/lfvenv/bin" >> "$GITHUB_ENV"; fi
+          start=$(date +%s)
+          uv pip install -q --python lfvenv "langflow==$LANGFLOW_VERSION"
+          echo "install took $(( $(date +%s) - start ))s"
+      - name: Download llama.cpp (CPU) and model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then pat='*-bin-win-cpu-x64.zip'; else pat='*-bin-ubuntu-x64.*'; fi
+          gh release download -R ggml-org/llama.cpp --pattern "$pat" -D llama-dl
+          mkdir -p llama
+          for f in llama-dl/*; do case "$f" in *.zip) unzip -q -o "$f" -d llama ;; *.tar.gz) tar -xzf "$f" -C llama ;; esac; done
+          server=$(find "$PWD/llama" -type f \( -name llama-server -o -name llama-server.exe \) | head -1)
+          [ -n "$server" ] || { echo "llama-server not found"; find llama | head -30; exit 1; }
+          chmod +x "$server"; echo "LLAMA_SERVER=$server" >> "$GITHUB_ENV"
+          curl -fsSL -o model.gguf "$MODEL_URL"; ls -la model.gguf
+      - name: Start local model and Langflow, build and run agents
+        run: |
+          set -u
+          srvdir=$(dirname "$LLAMA_SERVER")
+          export PATH="$srvdir:$PATH" LD_LIBRARY_PATH="$srvdir"
+          "$LLAMA_SERVER" -m model.gguf --host 127.0.0.1 --port 8095 -c 8192 --jinja -a qwen3-1.7b > llama.log 2>&1 &
+          for i in $(seq 90); do curl -sf http://127.0.0.1:8095/health >/dev/null && break; sleep 2; done
+          curl -sf http://127.0.0.1:8095/health || { tail -30 llama.log; exit 1; }
+
+          LF_PASSWORD=$(python -c "import secrets; print(secrets.token_hex(12))"); export LF_PASSWORD
+          sed -e "s/^LANGFLOW_SUPERUSER_PASSWORD=.*/LANGFLOW_SUPERUSER_PASSWORD=$LF_PASSWORD/" \
+              -e "s#^LANGFLOW_CONFIG_DIR=.*#LANGFLOW_CONFIG_DIR=$PWD/lfdata#" langflow-offline/langflow.env.example > lf.env
+          mkdir -p lfdata
+          start=$(date +%s)
+          "$LFBIN/langflow" run --env-file lf.env > langflow.log 2>&1 &
+          for i in $(seq 200); do curl -sf http://127.0.0.1:7860/health >/dev/null && break; sleep 3; done
+          curl -sf http://127.0.0.1:7860/health || { tail -60 langflow.log; exit 1; }
+          echo "langflow ready after $(( $(date +%s) - start ))s"
+
+          export LF_MODEL=qwen3-1.7b LF_STATE="$PWD/.lfstate"
+          py="$LFBIN/python"
+          "$py" langflow-offline/lf_drive.py setup
+          tpl=$("$py" langflow-offline/lf_drive.py template | tail -1)
+          triage=$("$py" langflow-offline/lf_drive.py scratch | tail -1)
+          echo "template agent: $tpl   from-scratch agent: $triage"
+          "$py" langflow-offline/lf_drive.py run "$tpl" "What is 17.5% of 2340? Use the calculator tool."
+          "$py" langflow-offline/lf_drive.py run "$triage" "I forgot my password and cannot log in to email."
+          echo "TPL=$tpl" >> "$GITHUB_ENV"; echo "TRIAGE=$triage" >> "$GITHUB_ENV"
+      - name: Answer checks (small CI model; reported, not gating)
+        continue-on-error: true
+        run: |
+          export LF_MODEL=qwen3-1.7b LF_STATE="$PWD/.lfstate"
+          "$LFBIN/python" langflow-offline/lf_drive.py check "$TPL" "What is 17.5% of 2340? Use the calculator tool." "409.5"
+          "$LFBIN/python" langflow-offline/lf_drive.py check "$TRIAGE" "Excel crashes when I open files with macros." "SOFTWARE"
+      - name: Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.os }}
+          path: |
+            langflow.log
+            llama.log
+          if-no-files-found: ignore

@@ -41,8 +41,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "$RUNNER_OS" = Windows ]; then pat='*-bin-win-cpu-x64.zip'; else pat='*-bin-ubuntu-x64.*'; fi
-          gh release download -R ggml-org/llama.cpp --pattern "$pat" -D llama-dl
+          if [ "$RUNNER_OS" = Windows ]; then re='bin-win-cpu-x64\.zip$'; else re='bin-ubuntu-x64\.(zip|tar\.gz)$'; fi
+          names=$(gh release view -R ggml-org/llama.cpp --json tagName,assets -q '.tagName, .assets[].name')
+          asset=$(echo "$names" | grep -E "$re" | head -1 || true)
+          [ -n "$asset" ] || { echo "no llama.cpp asset matches $re; release has:"; echo "$names"; exit 1; }
+          echo "llama.cpp $(echo "$names" | head -1): $asset"
+          gh release download -R ggml-org/llama.cpp --pattern "$asset" -D llama-dl
           mkdir -p llama
           for f in llama-dl/*; do case "$f" in *.zip) unzip -q -o "$f" -d llama ;; *.tar.gz) tar -xzf "$f" -C llama ;; esac; done
           server=$(find "$PWD/llama" -type f \( -name llama-server -o -name llama-server.exe \) | head -1)

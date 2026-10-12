@@ -42,11 +42,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "$RUNNER_OS" = Windows ]; then re='bin-win-cpu-x64\.zip$'; else re='bin-ubuntu-x64\.(zip|tar\.gz)$'; fi
-          names=$(gh release view -R ggml-org/llama.cpp --json tagName,assets -q '.tagName, .assets[].name')
-          asset=$(echo "$names" | grep -E "$re" | head -1 || true)
-          [ -n "$asset" ] || { echo "no llama.cpp asset matches $re; release has:"; echo "$names"; exit 1; }
-          echo "llama.cpp $(echo "$names" | head -1): $asset"
-          gh release download -R ggml-org/llama.cpp --pattern "$asset" -D llama-dl
+          # The newest release can carry no binaries (v0.6.0 had only nightly-tag.txt): use the newest that does.
+          tag=""; asset=""
+          for t in $(gh release list -R ggml-org/llama.cpp --limit 40 --json tagName -q '.[].tagName'); do
+            asset=$(gh release view "$t" -R ggml-org/llama.cpp --json assets -q '.assets[].name' | grep -E "$re" | head -1 || true)
+            if [ -n "$asset" ]; then tag=$t; break; fi
+          done
+          [ -n "$asset" ] || { echo "no llama.cpp release in the last 40 has an asset matching $re"; exit 1; }
+          echo "llama.cpp $tag: $asset"
+          gh release download "$tag" -R ggml-org/llama.cpp --pattern "$asset" -D llama-dl
           mkdir -p llama
           for f in llama-dl/*; do case "$f" in *.zip) unzip -q -o "$f" -d llama ;; *.tar.gz) tar -xzf "$f" -C llama ;; esac; done
           server=$(find "$PWD/llama" -type f \( -name llama-server -o -name llama-server.exe \) | head -1)

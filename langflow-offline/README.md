@@ -60,6 +60,13 @@ Build-from-description on a pip install: it reads component sources from `./src/
 `LANGFLOW_RESTRICT_LOCAL_FILE_ACCESS=false`. The last one lets users' flows read server files,
 so only do this on a single-user machine.
 
+## Running Langflow in Docker (or any container)
+
+Inside a container (it checks for `/.dockerenv`), Langflow rewrites `localhost` and `127.0.0.1` in model
+URLs to the Docker host's address. A model server in the same container is then unreachable and the SSRF
+guard rejects the address. Serve the model on another loopback address (e.g. `127.0.0.2`) and allow
+that host in `LANGFLOW_SSRF_ALLOWED_HOSTS`. Found on Kaggle, reproduced here by creating `/.dockerenv`.
+
 ## Windows
 
 `.github/workflows/langflow-offline.yml` runs the same steps on `windows-latest` and `ubuntu-latest`

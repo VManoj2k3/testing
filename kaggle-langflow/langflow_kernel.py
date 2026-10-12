@@ -1,5 +1,5 @@
 # Runs INSIDE a Kaggle 2x T4 session: Qwen (llama.cpp CUDA, both GPUs) + Langflow, in one notebook.
-# Langflow reaches the model on 127.0.0.1 only; just Langflow's port is tunnelled (plus the kill switch).
+# Langflow reaches the model on loopback (127.0.0.2) only; just Langflow's port is tunnelled (plus the kill switch).
 # Helpers are taken from kaggle-ragflow-gpu/gpu_kernel.py; the Langflow steps are lf_phases.py.
 # Double-underscore placeholders are filled by launch.sh.
 import base64, glob, os, re, signal, subprocess, sys, threading, time, urllib.request
@@ -17,6 +17,8 @@ FILES = {name: base64.b64decode(b).decode() for name, b in [
     ("lf_phases.py", "__PHASES_B64__"), ("lf_drive.py", "__DRIVE_B64__"), ("langflow.env.example", "__ENV_B64__")]}
 ALIAS = MODEL_REPO.split("/")[-1].lower()
 LLAMA_PORT, KILL_PORT, LF_PORT = 8080, 8081, 7860
+# Not 127.0.0.1: Langflow rewrites that to the Docker host inside a container. Still loopback-only.
+LLAMA_HOST = "127.0.0.2"
 VENV, HOME = "/opt/lfvenv", "/opt/lfhome"
 procs = []
 
@@ -150,12 +152,12 @@ def build_llama():
 def start_llama(qwen):
     # No --api-key: this port is never tunnelled; only Langflow (same machine) calls it.
     log = "/tmp/qwen.log"
-    q = subprocess.Popen(["/tmp/llama.cpp/build/bin/llama-server", "-m", qwen, "--host", "127.0.0.1",
+    q = subprocess.Popen(["/tmp/llama.cpp/build/bin/llama-server", "-m", qwen, "--host", LLAMA_HOST,
                           "--port", str(LLAMA_PORT), "-ngl", "99", "--split-mode", "layer", "--tensor-split", TENSOR_SPLIT,
                           "-c", str(CTX), "-np", str(NP), "--jinja", "--alias", ALIAS],
                          stdout=open(log, "w"), stderr=subprocess.STDOUT)
     procs.append(q)
-    wait_http(f"http://127.0.0.1:{LLAMA_PORT}/health", q, log)
+    wait_http(f"http://{LLAMA_HOST}:{LLAMA_PORT}/health", q, log)
     notify(f"QWEN up ({ALIAS}, ctx {CTX}, {NP} slots); GPU: {gpu_mem()}")
     return q
 
@@ -194,10 +196,10 @@ def main():
     sys.path.insert(0, "/tmp/lf")
     import lf_phases
     os.makedirs(HOME, exist_ok=True)
-    model_url = f"http://127.0.0.1:{LLAMA_PORT}/v1"
+    model_url = f"http://{LLAMA_HOST}:{LLAMA_PORT}/v1"
     try:  # Phase A: internal only; no Langflow URL exists yet.
         lf_phases.phase_a(VENV, HOME, model_url, ALIAS, ADMIN_PASS, report=notify)
-    except Exception as e:
+    except BaseException as e:
         notify(f"ASSIST probe failed: {type(e).__name__}: {e}"[:900])
     lfp = lf_phases.phase_b(VENV, HOME, model_url, ALIAS, ADMIN_PASS, report=notify)
     procs.append(lfp)
@@ -214,5 +216,5 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, lambda *a: shutdown("SIGTERM"))
     try:
         main()
-    except Exception as e:
+    except BaseException as e:  # SystemExit too: a silent exit left the run looking stuck for 1.5 h
         shutdown(f"{type(e).__name__}: {e}"[:1500], error=True)

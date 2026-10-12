@@ -7,7 +7,7 @@ template agent and a from-scratch agent, and run each once.
 
 CLI: python lf_phases.py <venv> <home> <model_url> <model_name> <admin_password> [A|B|AB]
 """
-import glob, json, os, subprocess, sys, time, urllib.request
+import glob, json, os, subprocess, sys, time, urllib.parse, urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -59,8 +59,10 @@ def wait_health(p, log, tries=300):
     raise RuntimeError("langflow never became healthy")
 
 
-def start(venv, home, password, restrict):
-    env_file = write_env(venv, home, password, restrict)
+def start(venv, home, password, restrict, model_url):
+    # Langflow rewrites localhost/127.0.0.1 to the Docker host when it detects a container (Kaggle is one),
+    # so the model is served on another loopback address and that host is the only SSRF exception.
+    env_file = write_env(venv, home, password, restrict, urllib.parse.urlparse(model_url).hostname)
     log = f"{home}/langflow.log"
     # Values the env file can't carry reliably are passed in the environment too.
     env = {"HOME": home, "PATH": f"{venv}/bin:/usr/bin:/bin", "LANG": "C.UTF-8",
@@ -117,27 +119,33 @@ QUESTIONS = [("template", "What is 17.5% of 2340? Use the calculator tool.", "40
 
 
 def phase_a(venv, home, model_url, model, password, report=print):
-    p = start(venv, home, password, restrict=False)
+    p = start(venv, home, password, restrict=False, model_url=model_url)
     try:
         d = drive_env(venv, home, model_url, model, password)
         d.setup(d.login())
         nodes, secs, reply = assist_probe(d, model, ASK)
         report(f"ASSIST built {len(nodes)} nodes {nodes} in {secs:.0f}s" if nodes
                else f"ASSIST built nothing in {secs:.0f}s; reply: {reply}")
+    except SystemExit as e:  # lf_drive exits on HTTP errors (CLI behaviour); report it here
+        raise RuntimeError(f"phase A: {e}") from None
     finally:
         stop(p)
 
 
 def phase_b(venv, home, model_url, model, password, report=print):
-    p = start(venv, home, password, restrict=True)
-    d = drive_env(venv, home, model_url, model, password)
-    tok = d.login()
-    d.setup(tok)
-    ids = {"template": d.template(tok), "triage": d.scratch(tok)}
-    for key, q, expect in QUESTIONS:
-        text = d.run(tok, ids[key], q)
-        ok = expect.lower() in (text or "").lower()
-        report(f"AGENT {key}: {'PASS' if ok else 'CHECK'} {text[:200]!r}")
+    p = start(venv, home, password, restrict=True, model_url=model_url)
+    try:
+        d = drive_env(venv, home, model_url, model, password)
+        tok = d.login()
+        d.setup(tok)
+        ids = {"template": d.template(tok), "triage": d.scratch(tok)}
+        for key, q, expect in QUESTIONS:
+            text = d.run(tok, ids[key], q)
+            ok = expect.lower() in (text or "").lower()
+            report(f"AGENT {key}: {'PASS' if ok else 'CHECK'} {text[:200]!r}")
+    except SystemExit as e:
+        stop(p)
+        raise RuntimeError(f"phase B: {e}") from None
     return p
 
 

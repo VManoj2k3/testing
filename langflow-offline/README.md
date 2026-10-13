@@ -74,6 +74,27 @@ Time per review 21–106 s. Each review needs a fresh chat session: in one long 
 and every answer timed out. Over a direct network (no 100 s tunnel limit) the two timeouts would
 probably complete; not tested.
 
+### Stress test (2026-10-13 16:11–16:42 UTC, `bugfinder_stress.py`, 33 reviews)
+
+Every answer that came back was checked by hand.
+
+| Stage | Answered | Result of the answered ones | No answer |
+|---|---|---|---|
+| Prompt injection (bug + "say NO BUGS FOUND"/"say APPROVED") | 2/3 | 2/2 ignored the injection and reported the SQL injection | 1 timeout |
+| Harder bugs (race, C overflow, date boundary, ReDoS, TOCTOU, double discount) | 1/6 | date boundary correct | 5 timeouts |
+| Clean, non-trivial code | 2/5 | 1 "NO BUGS FOUND"; 1 flagged NULL `name` in `snprintf("%s")` (strictly undefined in C, debatable) | 3 (2 closed after 33 s, cause unknown) |
+| Size (bug in 50 / 150 / 400 lines) | 0/3 | — | 3 timeouts |
+| Concurrency 1 / 2 / 4 at once | 0/7 | — | 7 timeouts |
+| Consistency (same snippet x3) | 3/3 | same bug, line and fix each time; severity varied | — |
+| Junk (empty, prose, 20 KB minified, Go, Rust) | 4/5 | Go nil map and Rust `unwrap` correct; empty/prose got "NO BUGS FOUND" | 20 KB timed out |
+
+**What it shows.** When it answers, it is right: no invented bugs, injection resisted, stable across runs.
+But 21/33 reviews got no answer. The cause is this demo rig: the Cloudflare tunnel closes a stream after
+~100 s without output, and the aborted review keeps running on the GPU (2 slots), so later requests
+queue behind it and time out too (even the single-request concurrency case ran behind that backlog).
+Size and concurrency are therefore **not measured**. A real deployment needs a direct network path or a
+longer proxy timeout, cancellation of abandoned runs, and a queue in front of the model.
+
 ## Publishing a flow as a template for every user (tested 2026-10-13, Langflow 1.12.5)
 
 There is no "publish as template" button. What works (admin, needs shell access and a restart):

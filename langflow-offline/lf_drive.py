@@ -134,6 +134,66 @@ def scratch(tok):
     return create(tok, "Helpdesk Triage", flow)
 
 
+BUGFINDER_PROMPT = """You are a senior code reviewer. Find BUGS in the code the user pastes: logic errors, off-by-one,
+null/None handling, resource leaks, injection, race conditions, missing await, wrong error handling, memory
+safety. Do not comment on style, naming or formatting.
+
+For each bug, output exactly:
+LINE: <line number or "unsure">
+SEVERITY: high | medium | low
+BUG: <one sentence>
+WHY: <what goes wrong at runtime>
+FIX: <corrected code>
+
+If you find no real bug, output exactly: NO BUGS FOUND
+Never invent line numbers or bugs you are not confident about."""
+
+
+def bugfinder(tok):
+    """Code Bug Finder: the Agent with a reviewer prompt and no tools (no code execution on a shared server)."""
+    flow = load_template("Simple Agent")
+    flow["data"]["nodes"] = [n for n in flow["data"]["nodes"] if n["data"].get("type") != "note"]
+    for n in flow["data"]["nodes"]:
+        if n["data"].get("type") == "Agent":
+            t = n["data"]["node"]["template"]
+            t["system_prompt"]["value"] = BUGFINDER_PROMPT
+            t["add_current_date_tool"]["value"] = False
+            t["add_calculator_tool"]["value"] = False
+            t["stream"]["value"] = True  # long reviews: keep the connection busy (tunnels cut idle requests at 100 s)
+    return create(tok, "Code Bug Finder", flow)
+
+
+def run_stream(tok, flow_id, question):
+    """Like run(), but streamed: events arrive while the model writes, so proxies don't time out."""
+    t = time.time()
+    req = urllib.request.Request(BASE + f"/run/{flow_id}?stream=true", method="POST",
+                                 data=json.dumps({"input_value": question, "input_type": "chat",
+                                                  "output_type": "chat"}).encode(),
+                                 headers={"Content-Type": "application/json", "x-api-key": api_key(tok)})
+    chunks, final = [], ""
+    for raw in opener.open(req, timeout=1800):
+        line = raw.decode(errors="replace").strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line[5:] if line.startswith("data:") else line)
+        except ValueError:
+            continue
+        kind, data = ev.get("event"), ev.get("data") or {}
+        if kind == "token":
+            chunks.append(data.get("chunk", ""))
+        elif kind == "end":
+            try:
+                final = data["result"]["outputs"][0]["outputs"][0]["results"]["message"]["text"]
+            except (KeyError, IndexError, TypeError):
+                pass
+        elif kind == "error":
+            sys.exit(f"run failed: {json.dumps(data)[:600]}")
+    text = final or "".join(chunks)
+    print(f"[{time.time() - t:.0f}s] Q: {question}\nA: {text}")
+    return text
+
+
 def run(tok, flow_id, question):
     t = time.time()
     r = call("POST", f"/run/{flow_id}?stream=false",
@@ -156,6 +216,8 @@ if __name__ == "__main__":
         template(tok)
     elif cmd == "scratch":
         scratch(tok)
+    elif cmd == "bugfinder":
+        bugfinder(tok)
     elif cmd == "run":
         if not run(tok, sys.argv[2], sys.argv[3]):
             sys.exit("FAIL: empty answer")

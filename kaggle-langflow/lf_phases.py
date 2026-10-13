@@ -179,6 +179,7 @@ def phase_b(venv, home, model_url, model, password, report=print):
         tok = d.login()
         d.setup(tok)
         ids = {"template": d.template(tok), "triage": d.scratch(tok)}
+        d.bugfinder(tok)  # Code Bug Finder (streaming on); not run here, reviews take 20-100 s
         for key, q, expect in QUESTIONS:
             text = d.run(tok, ids[key], q)
             ok = expect.lower() in (text or "").lower()

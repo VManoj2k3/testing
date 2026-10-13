@@ -95,6 +95,18 @@ queue behind it and time out too (even the single-request concurrency case ran b
 Size and concurrency are therefore **not measured**. A real deployment needs a direct network path or a
 longer proxy timeout, cancellation of abandoned runs, and a queue in front of the model.
 
+## More agents (`lf_drive.py agents`, tested 2026-10-13 on Qwen 27B through the tunnel)
+
+| Agent | Sample result | Time |
+|---|---|---|
+| Meeting → Action Items | correct table, no invented owners, decisions + open questions | 60 s |
+| Email Writer | firm/polite email with subject, placeholders for unknown facts | 41 s |
+| Bug Report → Jira Ticket | full ticket, asked for app/iOS version and logs | 48 s |
+| SQL Helper | correct join, 2025 date range, group/order, top 5 | 55 s |
+| Release Notes Writer | grouped notes, noise dropped, breaking change explained | 33 s |
+| Idea → Critic → Improver (3 agents chained) | short task: final version + what changed (153 s); longer pitch: no answer (tunnel idle limit while the first two agents work) | 153 s+ |
+| Unit Test Generator | **unreliable**: first prompt explained the code instead of testing it; stricter prompt times out at the 100 s tunnel limit | — |
+
 ## Publishing a flow as a template for every user (tested 2026-10-13, Langflow 1.12.5)
 
 There is no "publish as template" button. What works (admin, needs shell access and a restart):

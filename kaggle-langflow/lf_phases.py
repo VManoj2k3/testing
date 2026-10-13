@@ -180,6 +180,7 @@ def phase_b(venv, home, model_url, model, password, report=print):
         d.setup(tok)
         ids = {"template": d.template(tok), "triage": d.scratch(tok)}
         d.bugfinder(tok)  # Code Bug Finder (streaming on); not run here, reviews take 20-100 s
+        d.build_all(tok)  # 6 single agents + the Idea → Critic → Improver chain (see lf_drive.AGENTS)
         for key, q, expect in QUESTIONS:
             text = d.run(tok, ids[key], q)
             ok = expect.lower() in (text or "").lower()

@@ -163,6 +163,141 @@ def bugfinder(tok):
     return create(tok, "Code Bug Finder", flow)
 
 
+AGENTS = {
+    "Meeting → Action Items": """You turn messy meeting notes into a clear action list.
+Output:
+1. A markdown table with columns: # | Action | Owner | Due date | Notes. Use "unassigned" or "not set" when
+   the notes don't say; never invent names or dates.
+2. "Decisions made:" as bullets.
+3. "Open questions:" as bullets (things nobody answered or owned).
+Keep it short. No introduction.""",
+    "Email Writer": """You write professional emails. The user gives the situation and optionally a tone
+(formal, friendly, firm, apologetic; default: friendly-professional) and maybe an email to reply to.
+Output exactly:
+Subject: <subject line>
+
+<email body, under 150 words, with greeting and sign-off "[Your name]">
+Do not add facts the user did not give; use [placeholders] for missing details like dates or numbers.""",
+    "Bug Report → Jira Ticket": """You turn a rough bug complaint into a well-formed ticket.
+Output exactly these fields:
+Title: <short, specific>
+Component: <best guess, or "unknown">
+Priority: <Highest/High/Medium/Low> - <one-line reason based on user impact>
+Environment: <from the report, or "not given">
+Steps to reproduce:
+1. ...
+Expected result: ...
+Actual result: ...
+Missing information: <questions to ask the reporter>
+Never invent details that are not in the report; put guesses under Missing information.""",
+    "SQL Helper": """You write SQL from plain English. The user gives a question and (ideally) the table schema.
+Output:
+1. The SQL in a ```sql block (standard SQL; mention the dialect if it matters).
+2. "How it works:" 2-4 bullets.
+3. "Assumptions:" anything you guessed about the schema.
+If no schema is given, ask for it in one line and show a best-guess query with clearly named assumed columns.
+Never write UPDATE/DELETE/DROP unless explicitly asked, and then warn about it. You never execute queries.""",
+    "Unit Test Generator": """You are a test generator. Whatever the user sends is source code to be tested.
+NEVER explain the code. ALWAYS answer with tests, in this exact structure:
+
+```<language>
+<complete test file: imports, then one test per case, each with a one-line comment>
+```
+Possible bugs:
+- <behaviour the tests expose as wrong, or "none found">
+
+Framework: pytest for Python, Jest for JavaScript/TypeScript, JUnit 5 for Java, unless the user names another.
+Write AT MOST 6 tests and keep the file under 40 lines: pick the most valuable normal, edge (empty, zero,
+negative, boundaries, None/null) and error cases.""",
+    "Release Notes Writer": """You turn a list of commit messages or changes into release notes for users.
+Output markdown with sections (omit empty ones): ## New features, ## Improvements, ## Bug fixes,
+## Breaking changes (with what users must do), ## Internal (one line, optional).
+Rewrite developer jargon into plain language, merge duplicates, drop noise like "fix typo" or "merge branch".
+Do not invent changes that are not in the list.""",
+}
+
+CHAIN_STEPS = [
+    ("Drafter", """You are the DRAFTER. Write a first version of what the user asks for (a pitch, plan, announcement,
+idea, etc.). Be concrete. Output only the draft."""),
+    ("Critic", """You are the CRITIC. You receive a draft. Reply in exactly this format:
+DRAFT:
+<the draft, copied unchanged>
+
+CRITIQUE:
+- <3-5 specific weaknesses: unclear points, missing facts, weak arguments, tone problems>"""),
+    ("Improver", """You are the IMPROVER. You receive a DRAFT and a CRITIQUE. Rewrite the draft so every critique point
+is fixed. Output only:
+FINAL VERSION:
+<improved text>
+
+WHAT CHANGED:
+- <one bullet per critique point>"""),
+]
+
+
+def _agent_flow(prompt):
+    """Simple Agent template without internet tools or notes; the given instructions; no tools; streaming on."""
+    flow = load_template("Simple Agent")
+    flow["data"]["nodes"] = [n for n in flow["data"]["nodes"] if n["data"].get("type") != "note"]
+    for n in flow["data"]["nodes"]:
+        if n["data"].get("type") == "Agent":
+            t = n["data"]["node"]["template"]
+            t["system_prompt"]["value"] = prompt
+            t["add_current_date_tool"]["value"] = False
+            t["add_calculator_tool"]["value"] = False
+            t["stream"]["value"] = True
+    return flow
+
+
+def build_agent(tok, name, prompt):
+    return create(tok, name, _agent_flow(prompt))
+
+
+def _handle(d):
+    return json.dumps(d).replace('"', "œ")
+
+
+def _edge(src, src_type, tgt, tgt_input_types, tgt_field_type):
+    sh = {"dataType": src_type, "id": src, "name": "message" if src_type == "ChatInput" else "response",
+          "output_types": ["Message"]}
+    th = {"fieldName": "input_value", "id": tgt, "inputTypes": tgt_input_types, "type": tgt_field_type}
+    compact = lambda h: json.dumps(h, separators=(",", ":")).replace('"', "œ")
+    return {"source": src, "target": tgt, "sourceHandle": _handle(sh), "targetHandle": _handle(th),
+            "id": f"reactflow__edge-{src}{compact(sh)}-{tgt}{compact(th)}",
+            "data": {"sourceHandle": sh, "targetHandle": th}, "className": "", "animated": False}
+
+
+def build_chain(tok, name="Idea → Critic → Improver"):
+    """Multi-agent flow: Chat Input -> Drafter -> Critic -> Improver -> Chat Output (three Agent nodes)."""
+    flow = _agent_flow(CHAIN_STEPS[0][1])
+    nodes = flow["data"]["nodes"]
+    agent = next(n for n in nodes if n["data"]["type"] == "Agent")
+    chat_in = next(n for n in nodes if n["data"]["type"] == "ChatInput")
+    chat_out = next(n for n in nodes if n["data"]["type"] == "ChatOutput")
+    agents = [agent]
+    for i, (_, prompt) in enumerate(CHAIN_STEPS[1:], start=1):
+        clone = json.loads(json.dumps(agent))
+        clone["id"] = clone["data"]["id"] = f"Agent-chain{i}"
+        clone["position"] = {"x": agent["position"]["x"] + 450 * i, "y": agent["position"]["y"]}
+        clone["data"]["node"]["template"]["system_prompt"]["value"] = prompt
+        nodes.append(clone)
+        agents.append(clone)
+    for a, (label, _) in zip(agents, CHAIN_STEPS):
+        a["data"]["node"]["display_name"] = f"Agent: {label}"
+    chat_out["position"] = {"x": agents[-1]["position"]["x"] + 450, "y": chat_out["position"]["y"]}
+    edges = [_edge(chat_in["id"], "ChatInput", agents[0]["id"], ["Message"], "str")]
+    edges += [_edge(a["id"], "Agent", b["id"], ["Message"], "str") for a, b in zip(agents, agents[1:])]
+    edges.append(_edge(agents[-1]["id"], "Agent", chat_out["id"], ["Data", "JSON", "DataFrame", "Table", "Message"], "other"))
+    flow["data"]["edges"] = edges
+    return create(tok, name, flow)
+
+
+def build_all(tok):
+    ids = {name: build_agent(tok, name, prompt) for name, prompt in AGENTS.items()}
+    ids["Idea → Critic → Improver"] = build_chain(tok)
+    return ids
+
+
 def run_stream(tok, flow_id, question, session_id=None):
     """Like run(), but streamed: events arrive while the model writes, so proxies don't time out."""
     t = time.time()
@@ -219,6 +354,9 @@ if __name__ == "__main__":
         scratch(tok)
     elif cmd == "bugfinder":
         bugfinder(tok)
+    elif cmd == "agents":
+        for name, fid in build_all(tok).items():
+            print(f"{fid}\t{name}")
     elif cmd == "run":
         if not run(tok, sys.argv[2], sys.argv[3]):
             sys.exit("FAIL: empty answer")

@@ -7,7 +7,7 @@ template agent and a from-scratch agent, and run each once.
 
 CLI: python lf_phases.py <venv> <home> <model_url> <model_name> <admin_password> [A|B|AB]
 """
-import glob, json, os, subprocess, sys, time, urllib.parse, urllib.request
+import glob, json, os, secrets, subprocess, sys, time, urllib.parse, urllib.request, uuid
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -65,8 +65,11 @@ def start(venv, home, password, restrict, model_url):
     env_file = write_env(venv, home, password, restrict, urllib.parse.urlparse(model_url).hostname)
     log = f"{home}/langflow.log"
     # Values the env file can't carry reliably are passed in the environment too.
+    # OPENAI_* in Langflow's own environment: imported as variables for every user (new ones too), so
+    # copies of shared templates run for everyone. As per-user variables only the admin could run them.
     env = {"HOME": home, "PATH": f"{venv}/bin:/usr/bin:/bin", "LANG": "C.UTF-8",
-           "LITELLM_LOCAL_MODEL_COST_MAP": "True", "LANGFLOW_MODELS_DEV_REFRESH": "false"}
+           "LITELLM_LOCAL_MODEL_COST_MAP": "True", "LANGFLOW_MODELS_DEV_REFRESH": "false",
+           "OPENAI_BASE_URL": model_url, "OPENAI_API_KEY": "local-no-key"}
     p = subprocess.Popen([f"{venv}/bin/langflow", "run", "--env-file", str(env_file)], cwd=home, env=env,
                          stdout=open(log, "w"), stderr=subprocess.STDOUT, start_new_session=True)
     wait_health(p, log)
@@ -132,6 +135,43 @@ def phase_a(venv, home, model_url, model, password, report=print):
         stop(p)
 
 
+COMPANY_TEMPLATE = "Helpdesk Triage (company)"
+
+
+def publish_template(venv, d, tok, flow_name, tpl_name):
+    """Admin route: export a flow into Langflow's starter_projects folder (shown under Templates after restart)."""
+    src = next(f for f in d.call("GET", "/flows/?get_all=true&header_flows=false", token=tok) if f["name"] == flow_name)
+    tpl = {"data": src["data"], "description": f"{flow_name}, published by the admin", "endpoint_name": None,
+           "id": str(uuid.uuid4()), "is_component": False, "last_tested_version": "1.12.5", "locked": False,
+           "name": tpl_name, "tags": ["agents"]}
+    path = site_packages(venv) / "langflow/initial_setup/starter_projects" / f"{tpl_name}.json"
+    path.write_text(json.dumps(tpl, indent=2), encoding="utf-8")
+
+
+def check_second_user(d, admin_tok, question, expect):
+    """A throwaway non-admin user copies the company template and runs it; the user is deleted afterwards."""
+    name, pw = "check-" + secrets.token_hex(3), secrets.token_urlsafe(12)
+    uid = d.call("POST", "/users/", {"username": name, "password": pw})["id"]
+    try:
+        d.call("PATCH", f"/users/{uid}", {"is_active": True}, token=admin_tok)
+        tok = d.call("POST", "/login", {"username": name, "password": pw}, form=True)["access_token"]
+        tpls = d.call("GET", "/flows/basic_examples/", token=tok)
+        tpl = next((t for t in tpls if t["name"] == COMPANY_TEMPLATE), None)
+        if not tpl:
+            return f"SHARED template not visible to a second user ({len(tpls)} templates)"
+        leaked = [f["name"] for f in d.call("GET", "/flows/?get_all=true&header_flows=true", token=tok)]
+        mine = d.call("POST", "/flows/", {"name": "copy", "data": tpl["data"]}, token=tok)
+        key = d.call("POST", "/api_key/", {"name": "check"}, token=tok)["api_key"]
+        out = d.call("POST", f"/run/{mine['id']}?stream=false",
+                     {"input_value": question, "input_type": "chat", "output_type": "chat"}, token=key)
+        text = out["outputs"][0]["outputs"][0]["results"]["message"]["text"]
+        ok = expect.lower() in text.lower()
+        return (f"SHARED second user: sees {len(tpls)} templates incl. company one, admin flows visible: "
+                f"{leaked or 'none'}, ran copy: {'PASS' if ok else 'CHECK'} {text[:160]!r}")
+    finally:
+        d.call("DELETE", f"/users/{uid}", token=admin_tok)
+
+
 def phase_b(venv, home, model_url, model, password, report=print):
     p = start(venv, home, password, restrict=True, model_url=model_url)
     try:
@@ -143,6 +183,10 @@ def phase_b(venv, home, model_url, model, password, report=print):
             text = d.run(tok, ids[key], q)
             ok = expect.lower() in (text or "").lower()
             report(f"AGENT {key}: {'PASS' if ok else 'CHECK'} {text[:200]!r}")
+        publish_template(venv, d, tok, "Helpdesk Triage", COMPANY_TEMPLATE)
+        stop(p)
+        p = start(venv, home, password, restrict=True, model_url=model_url)  # templates reload on start
+        report(check_second_user(d, d.login(), "I forgot my password and I am locked out of email.", "ACCOUNT"))
     except SystemExit as e:
         stop(p)
         raise RuntimeError(f"phase B: {e}") from None

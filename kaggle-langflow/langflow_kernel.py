@@ -197,10 +197,7 @@ def main():
     import lf_phases
     os.makedirs(HOME, exist_ok=True)
     model_url = f"http://{LLAMA_HOST}:{LLAMA_PORT}/v1"
-    try:  # Phase A: internal only; no Langflow URL exists yet.
-        lf_phases.phase_a(VENV, HOME, model_url, ALIAS, ADMIN_PASS, report=notify)
-    except BaseException as e:
-        notify(f"ASSIST probe failed: {type(e).__name__}: {e}"[:900])
+    # Phase A (build-from-description probe) is skipped: it built nothing with 4B or 27B (2026-10-12/13).
     lfp = lf_phases.phase_b(VENV, HOME, model_url, ALIAS, ADMIN_PASS, report=notify)
     procs.append(lfp)
     notify(f"APP_URL {tunnel(LF_PORT)}")

@@ -60,6 +60,20 @@ Build-from-description on a pip install: it reads component sources from `./src/
 `LANGFLOW_RESTRICT_LOCAL_FILE_ACCESS=false`. The last one lets users' flows read server files,
 so only do this on a single-user machine.
 
+## Code Bug Finder agent (tested 2026-10-13, Qwen3.8-27B on Kaggle 2x T4, through the tunnel)
+
+`lf_drive.py bugfinder` builds it; `bugfinder_cases.py` scores it on 8 seeded bugs + 2 correct snippets.
+
+| Result | Cases |
+|---|---|
+| Found, right line, right fix (checked by hand) | none-deref, SQL injection, file leak, mutable default, missing await, division by zero (6) |
+| No answer: the model wrote nothing for >100 s and the tunnel closed the stream | off-by-one, C buffer overflow (2) |
+| Clean code reported as "NO BUGS FOUND" | 2/2 (no false alarms) |
+
+Time per review 21–106 s. Each review needs a fresh chat session: in one long session the prompt grows
+and every answer timed out. Over a direct network (no 100 s tunnel limit) the two timeouts would
+probably complete; not tested.
+
 ## Publishing a flow as a template for every user (tested 2026-10-13, Langflow 1.12.5)
 
 There is no "publish as template" button. What works (admin, needs shell access and a restart):

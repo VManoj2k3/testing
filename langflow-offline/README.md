@@ -60,6 +60,22 @@ Build-from-description on a pip install: it reads component sources from `./src/
 `LANGFLOW_RESTRICT_LOCAL_FILE_ACCESS=false`. The last one lets users' flows read server files,
 so only do this on a single-user machine.
 
+## Publishing a flow as a template for every user (tested 2026-10-13, Langflow 1.12.5)
+
+There is no "publish as template" button. What works (admin, needs shell access and a restart):
+1. Export the flow (UI: Export, or `GET /api/v1/flows/{id}`) as JSON with `name`, `description`, `data`.
+2. Put it in `<site-packages>/langflow/initial_setup/starter_projects/`.
+3. Restart. Templates are rebuilt from that folder on every start.
+
+Result: a second user saw it under Templates (27 total), copied it and ran it; the admin's own flows
+stayed invisible to that user. Two catches found in the test:
+- **Model settings are per user.** The template carries the model *name*, but the base URL/key are the
+  admin's private variables, so the second user's copy failed ("OpenAI API key is required"). Fix: put
+  `OPENAI_API_KEY` and `OPENAI_BASE_URL` in Langflow's own environment; they then apply to every user,
+  including users created later (verified with a user created after the restart).
+- **The folder is inside the installed package**: a `pip install -U langflow` wipes added templates.
+  Keep the JSON files in your own repo and copy them in after each upgrade.
+
 ## Running Langflow in Docker (or any container)
 
 Inside a container (it checks for `/.dockerenv`), Langflow rewrites `localhost` and `127.0.0.1` in model

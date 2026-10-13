@@ -18,7 +18,7 @@ Usage:
   python lf_drive.py run <flow_id> <question>    run a flow and print the answer
   python lf_drive.py check <flow_id> <question> <expected>   like run, exits 1 if <expected> is missing
 """
-import importlib.util, json, os, sys, time, urllib.error, urllib.parse, urllib.request
+import gzip, importlib.util, json, os, sys, time, urllib.error, urllib.parse, urllib.request
 from pathlib import Path
 
 BASE = os.environ.get("LF_URL", "http://127.0.0.1:7860").rstrip("/") + "/api/v1"
@@ -54,7 +54,10 @@ def call(method, path, body=None, form=False, token=None, timeout=900):
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(BASE + path, data=data, method=method, headers=headers)
     try:
-        return json.loads(opener.open(req, timeout=timeout).read() or b"null")
+        raw = opener.open(req, timeout=timeout).read()
+        if raw[:2] == b"\x1f\x8b":  # some list endpoints return gzip without Content-Encoding
+            raw = gzip.decompress(raw)
+        return json.loads(raw or b"null")
     except urllib.error.HTTPError as e:
         sys.exit(f"{method} {path} -> {e.code}: {e.read()[:600].decode(errors='replace')}")
 

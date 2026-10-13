@@ -163,12 +163,13 @@ def bugfinder(tok):
     return create(tok, "Code Bug Finder", flow)
 
 
-def run_stream(tok, flow_id, question):
+def run_stream(tok, flow_id, question, session_id=None):
     """Like run(), but streamed: events arrive while the model writes, so proxies don't time out."""
     t = time.time()
     req = urllib.request.Request(BASE + f"/run/{flow_id}?stream=true", method="POST",
-                                 data=json.dumps({"input_value": question, "input_type": "chat",
-                                                  "output_type": "chat"}).encode(),
+                                 data=json.dumps({"input_value": question, "input_type": "chat", "output_type": "chat",
+                                                  # a fresh session per call, so earlier chats don't grow the prompt
+                                                  "session_id": session_id or f"lfdrive-{time.time_ns()}"}).encode(),
                                  headers={"Content-Type": "application/json", "x-api-key": api_key(tok)})
     chunks, final = [], ""
     for raw in opener.open(req, timeout=1800):

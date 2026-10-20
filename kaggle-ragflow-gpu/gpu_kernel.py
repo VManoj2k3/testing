@@ -4,7 +4,7 @@
 # The kill-switch server also takes secret-protected POST /ingestor/<cpu|cuda> (restart the ingestor on
 # that device) and GET /gpu (nvidia-smi), so CPU vs GPU parsing can be benchmarked from outside.
 # Double-underscore placeholders are filled by launch.sh.
-import base64, glob, json, os, re, signal, subprocess, threading, time, urllib.request
+import base64, glob, json, os, re, signal, socket, subprocess, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 SECRET = "__SECRET__"
@@ -22,7 +22,7 @@ FILES = {name: base64.b64decode(b).decode() for name, b in [
     ("build_gpu_server.sh", "__BUILD_GPU_B64__"), ("ragflow_deepdoc_gpu.patch", "__PATCH_B64__")]}
 SRC = "/opt/ragflow"
 ALIAS = MODEL_REPO.split("/")[-1].lower()
-LLAMA_PORT, KILL_PORT, EMBED_PORT, WEB_PORT = 8080, 8081, 8093, 80
+LLAMA_PORT, KILL_PORT, EMBED_PORT, WEB_PORT, MCP_PORT = 8080, 8081, 8093, 80, 9382
 procs, gpu_env = [], {}
 
 def notify(msg):
@@ -110,8 +110,20 @@ class ControlHandler(BaseHTTPRequestHandler):
             self.send_response(404); self.end_headers()
     def log_message(self, *a): pass
 
-def tunnel(port):
-    p = subprocess.Popen(["/tmp/cloudflared", "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}"],
+def port_open(port, wait_s):
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        with socket.socket() as so:
+            if so.connect_ex(("127.0.0.1", port)) == 0:
+                return True
+        time.sleep(3)
+    return False
+
+
+def tunnel(port, host_header=None):
+    # host_header: for servers that only accept a loopback Host (RAGFlow's MCP DNS-rebinding guard).
+    extra = ["--http-host-header", host_header] if host_header else []
+    p = subprocess.Popen(["/tmp/cloudflared", "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}", *extra],
                          stderr=subprocess.PIPE, text=True)
     procs.append(p)
     for line in p.stderr:
@@ -257,6 +269,11 @@ def main():
         raise RuntimeError("model download: " + models.get("error", "timed out"))
     qwen = start_llama(models["qwen"], models["embed"], models.get("mmproj", ""))
 
+    # MCP server inside the API process. "host" mode: every client must send its own RAGFlow API key
+    # (self-host mode ignores client keys, see kaggle-ragflow/TEST_RESULTS.md). Set in os.environ so API
+    # restarts (create_admin) keep it.
+    os.environ.update(RAGFLOW_MCP_ENABLED="true", RAGFLOW_MCP_LAUNCH_MODE="host",
+                      RAGFLOW_MCP_HOST="127.0.0.1", RAGFLOW_MCP_PORT=str(MCP_PORT))
     # Ingestor starts on the GPU; if CUDA can't be used it refuses to start, so fall back to CPU and say so.
     try:
         sh_steps("bash /tmp/run_ragflow.sh start", 600,
@@ -274,6 +291,10 @@ def main():
     out = sh(f"bash /tmp/run_ragflow.sh create_admin '{ADMIN_EMAIL}' '{ADMIN_PASS}'", env={"RAGFLOW_SRC": SRC})
     notify("ADMIN " + " | ".join(l for l in out.splitlines() if l.startswith(("login:", "sign-up:")))[:400])
     notify(f"APP_URL {tunnel(WEB_PORT)}")
+    if port_open(MCP_PORT, 60):
+        notify(f"MCP_URL {tunnel(MCP_PORT, host_header='localhost')}")
+    else:
+        notify("WARN MCP not listening: " + sh("grep -i mcp /var/log/ragflow/api.log | tail -3 || true")[-600:])
     notify(f"LLM_LOCAL http://127.0.0.1:{LLAMA_PORT}/v1 EMBED_LOCAL http://127.0.0.1:{EMBED_PORT}/v1")
     notify("READY ragflow-gpu")
 

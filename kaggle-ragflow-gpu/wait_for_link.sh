@@ -10,11 +10,11 @@ while :; do
 for l in sys.stdin:
     l=l.strip()
     if l and json.loads(l).get("event")=="message": print(json.loads(l)["message"])' || true)
-  for k in KILL_URL APP_URL; do
+  for k in KILL_URL APP_URL MCP_URL; do
     v=$(sed -n "s/^$k //p" <<<"$MSGS" | tail -1); [ -n "$v" ] && echo "$v" > .state/$(tr A-Z a-z <<<"$k")
   done
   if grep -q '^ERROR' <<<"$MSGS"; then echo "$MSGS"; echo "Run failed (see ERROR above)."; exit 1; fi
-  if grep -q '^READY' <<<"$MSGS"; then echo "$MSGS"; echo "RAGFlow URL: $(cat .state/app_url)"; exit 0; fi
+  if grep -q '^READY' <<<"$MSGS"; then echo "$MSGS"; echo "RAGFlow URL: $(cat .state/app_url)"; [ -f .state/mcp_url ] && echo "MCP URL: $(cat .state/mcp_url)/mcp"; exit 0; fi
   now=$(date +%s)
   if [ -z "$started" ] && [ -n "$MSGS" ]; then started=$now; fi
   if [ -z "$started" ] && (( now - t0 > QUEUE_MAX_MIN * 60 )); then echo "Still queued after $QUEUE_MAX_MIN min."; exit 1; fi

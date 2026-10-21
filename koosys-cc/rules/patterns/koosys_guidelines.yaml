@@ -1,7 +1,7 @@
 # KooSys coding guideline rules (KooSys_CodingGuidelines v2.1, Quantum Leaps C coding standard,
 # AUTOSAR SWS StandardTypes R21-11). Where the documents contradict each other, the decision taken
 # is recorded in GUIDELINE_DECISIONS.md. metadata.koosys = rule id, metadata.level = error|warning|info.
-# Semgrep sees one file before preprocessing; all rules here are syntactic. File-scope rules that
+# The KooSys CC rule engine sees one file before preprocessing; all rules here are syntactic. File-scope rules that
 # need exact brace scope (KSYS-NAME-03, KSYS-HDR-01) and text/layout rules live in vscode/src/textchecks.ts.
 rules:
   # ---------------------------------------------------------------- naming (KooSys 4.3)

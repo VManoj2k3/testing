@@ -1,4 +1,4 @@
-// KooSys rules that need exact brace scope or the raw text (layout, file names, comments, function
+// KooSys CC rules that need exact brace scope or the raw text (layout, file names, comments, function
 // size). Pure TypeScript: runs in milliseconds, no external process. No vscode imports.
 import * as path from "path";
 import { Finding, Level } from "./engines";
@@ -112,7 +112,7 @@ function lineIndex(src: string): (offset: number) => number {
 }
 
 function finding(file: string, rule: string, level: Level, line: number, column: number, detail: string): Finding {
-  return { rule, file, line, column, endLine: line, endColumn: column + 1, engine: "koosys", detail, level };
+  return { rule, file, line, column, endLine: line, endColumn: column + 1, engine: "text", detail, level };
 }
 
 interface FunctionDef {
@@ -291,7 +291,7 @@ export function checkText(file: string, src: string, opt: TextCheckOptions = DEF
   for (const s of statements) {
     const name = variableName(s);
     if (!name || /^static\b/.test(s.text) || /\bstatic\b/.test(s.preBrace)) {
-      continue; // static file-scope variables: KSYS-NAME-07 (Semgrep)
+      continue; // static file-scope variables: KSYS-NAME-07 (rule engine)
     }
     const offset = s.start + Math.max(0, code.slice(s.start, s.end).indexOf(name));
     const line = lineOf(offset);

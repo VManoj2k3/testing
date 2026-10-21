@@ -1,5 +1,5 @@
-# MISRA C:2012 (Amd 2-4) rules that cppcheck's free MISRA addon does not detect (measured in COVERAGE.md).
-# Semgrep CE sees one file before preprocessing and has no type information, so every rule here is
+# MISRA C:2023 rules the KooSys CC MISRA engine does not detect (measured in COVERAGE.md).
+# The KooSys CC rule engine sees one file before preprocessing and has no type information, so every rule here is
 # syntactic. Messages paraphrase the rule; the authoritative wording is in KooSys_MisraRules.pdf.
 rules:
   - id: misra-1.2-language-extension

@@ -1,0 +1,50 @@
+id,source,level,engine,status,summary
+KSYS-NAME-01,KooSys 4.3,warning,rules,checked,Variables lowercase with underscores
+KSYS-NAME-02,KooSys 4.3,warning,rules,checked,Functions Module_Function style
+KSYS-NAME-03,KooSys 4.3,warning,text,checked,Global variables carry a module prefix
+KSYS-NAME-04,KooSys 4.3 / QL 5.2,warning,rules,checked,Constants and macros UPPER_CASE
+KSYS-NAME-05,KooSys 4.3,warning,rules,checked,Typedef names lower_snake ending in _t
+KSYS-NAME-06,KooSys 4.3 / QL 5.2,warning,rules,partial,Identifiers at most 31 characters (declarations/functions/macros; not parameters or members)
+KSYS-NAME-07,KooSys 4.3 / QL 5.2,warning,rules,checked,File-scope static variables start with l_
+KSYS-NAME-08,QL 5.1,warning,rules,checked,No leading underscore; no C-reserved prefixes for external names
+KSYS-TYPE-01,QL 4 / AUTOSAR SRS_BSW_00304,warning,rules,checked,No raw C integer types (stdint or AUTOSAR types)
+KSYS-TYPE-02,AUTOSAR SWS_Std 8.2.1,warning,rules,partial,Std_ReturnType functions return E_OK/E_NOT_OK (literal returns only)
+KSYS-CMT-01,KooSys 4.2,info,rules,checked,Single-line // comments (doxygen /** */ allowed)
+KSYS-DOC-01,KooSys 4.2,warning,text,partial,File header comment with purpose/author/date (checks author and date)
+KSYS-DOC-02,KooSys 4.2,warning,text,partial,Doxygen comment before each function (requirement ID if koosys.requirementIdPattern is set)
+KSYS-PTR-01,KooSys 4.6,warning,rules,checked,Local pointers initialised at declaration
+KSYS-HDR-01,AUTOSAR SRS_BSW_00308,warning,text,checked,No global data definitions in header files
+KSYS-PRE-01,KooSys 5,info,rules,checked,Preprocessor limited to includes and simple macros
+KSYS-LOOP-01,KooSys 5,info,rules,partial,Loops have a fixed upper limit (flags for(;;)/while(1) only)
+KSYS-FUNC-01,KooSys 5 / QL 3.4.6,info,text,checked,Functions no longer than one page (koosys.maxFunctionLines)
+KSYS-FUNC-02,KooSys 5,info,text,checked,At least two assertions per function (koosys.assertionMacros)
+KSYS-FMT-01,KooSys 4.8 / QL 2,info,text,checked,No tabs
+KSYS-FMT-02,KooSys 4.8 / QL 2,info,text,checked,Lines at most 78 columns
+KSYS-FMT-03,KooSys 4.8 / QL 2,info,text,checked,Unix LF line endings
+KSYS-FMT-04,QL 3.2,info,text,partial,4-space indentation (continuation lines skipped)
+KSYS-FILE-01,KooSys 4.1 / 4.8,info,text,checked,Lowercase file names with underscores
+KSYS-FILE-02,KooSys 4.8 / QL 2,info,text,off-by-default,DOS 8.3 file names (contradicts KooSys 4.1 example module_name.c)
+KSYS-MAP-GOTO,KooSys 4.5 / 5,,misra,covered-by-misra,No goto: MISRA 15.1
+KSYS-MAP-SINGLE-EXIT,KooSys 4.5,,misra,covered-by-misra,Single exit point: MISRA 15.5
+KSYS-MAP-BRACES,KooSys 4.5,,misra,covered-by-misra,Braces on control statements: MISRA 15.6
+KSYS-MAP-RECURSION,KooSys 4.7 / 5,,misra,covered-by-misra,No recursion: MISRA 17.2
+KSYS-MAP-DYNAMIC-MEMORY,KooSys 4.6 / 5,,misra,covered-by-misra,No dynamic memory: MISRA 21.3
+KSYS-MAP-RETURN-VALUE,KooSys 5,,misra,covered-by-misra,Return values evaluated: MISRA 17.7
+KSYS-MAP-POINTER-ARITH,KooSys 4.6,,misra,covered-by-misra,No pointer arithmetic: MISRA 18.4 (+ - += -= only)
+KSYS-MAP-BLOCK-SCOPE,KooSys 4.4,,misra,covered-by-misra,Smallest scope: MISRA 8.9 / MISRA engine variableScope
+KSYS-MAP-EXPLICIT-TYPES,KooSys 4.4,,misra,covered-by-misra,Explicit types: MISRA 8.1
+KSYS-NC-DECL-AT-BLOCK-START,KooSys 4.4,,,not-checkable,Declare variables at the beginning of a block
+KSYS-NC-CONST,KooSys 4.4,,,not-checkable,Use const where appropriate (the MISRA engine's constVariable check is not reported)
+KSYS-NC-MODULE-PER-FILE,KooSys 4.1,,,not-checkable,One module per C file with a descriptive name
+KSYS-NC-ENGLISH,KooSys 4.2,,,not-checkable,Comments written in English
+KSYS-NC-INTENT,KooSys 4.2,,,not-checkable,Comments describe intention; complex code commented
+KSYS-NC-CODE-IN-COMMENT,KooSys 4.2,,,not-checkable,Comments may not include code
+KSYS-NC-MEANINGFUL-NAMES,KooSys 4.2 / 4.3,,,not-checkable,Meaningful and scope-appropriate names
+KSYS-NC-ERRORS,KooSys 4.5,,,not-checkable,Errors handled gracefully and consistently
+KSYS-NC-OWNERSHIP,KooSys 4.6,,,not-checkable,Ownership and lifetime of parameters documented
+KSYS-NC-MANUAL-MEMORY,KooSys 4.6,,,not-checkable,Direct address writes aligned with the SW architect
+KSYS-NC-MEMORY-USE,KooSys 4.7,,,not-checkable,Minimise memory use and copying; critical sections
+KSYS-NC-QL-EVENT-DRIVEN,KooSys 4.7,,,not-checkable,Quantum Leaps event-driven guidelines
+KSYS-NC-POINTER-USE,KooSys 5,,,not-checkable,Use of pointers restricted
+KSYS-NC-ISO26262-PROCESS,KooSys 4.9.2,,,not-checkable,ISO 26262 process requirements (parts 6-12)
+KSYS-NC-COMPILER-WARNINGS,KooSys 5,,,not-checkable,Compile with the strictest compiler warnings

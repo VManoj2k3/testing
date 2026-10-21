@@ -1,10 +1,11 @@
 # Rule coverage: KooSys MISRA list (200 rules) and KooSys coding guidelines
 
-Measured 2026-10-21 with cppcheck 2.22.0 (free MISRA addon + core checks, `--report-type=misra-c-2023`,
+Measured 2026-10-21 with the KooSys CC engines as bundled in the extension: the MISRA engine (MISRA add-on + core checks,
+`--report-type=misra-c-2023`,
 matching KooSys guideline v2.1, which moved to MISRA C:2023; the 2012 mode gave identical results)
-and Semgrep CE 1.182.0 with `rules/semgrep/misra_gaps.yaml`. Regenerate with:
+and the rule engine with `rules/patterns/misra_gaps.yaml`. Engine versions: THIRD_PARTY_NOTICES.md. Regenerate with:
 
-    python tests/score.py --cppcheck <cppcheck> --semgrep <semgrep> --md COVERAGE_table.md
+    python tests/score.py --md COVERAGE_table.md      # uses vscode/engines (scripts/fetch-engines.py)
 
 ## How to read this
 - Each rule has one or two seeded violations in `tests/misra/` (marked `// EXPECT <rule>`).
@@ -14,7 +15,7 @@ and Semgrep CE 1.182.0 with `rules/semgrep/misra_gaps.yaml`. Regenerate with:
 - `(+N)` = the engine also reported that rule on N unmarked lines. Most are genuine (fixtures
   break other rules incidentally); they are not counted as false alarms without a manual review.
 - 1.1 and 1.4 have no fixture: 1.1 is the compiler's job (syntax/constraints/translation limits),
-  1.4 is flagged by cppcheck as a side effect elsewhere (it reports C11 keywords as emergent features).
+  1.4 is flagged by the MISRA engine as a side effect elsewhere (it reports C11 keywords as emergent features).
 
 ## Summary
 
@@ -25,7 +26,7 @@ and Semgrep CE 1.182.0 with `rules/semgrep/misra_gaps.yaml`. Regenerate with:
 | Advisory (40) | 34 | 6 | 0 |
 | **Total (200)** | **153** | **45** | **2** |
 
-- cppcheck alone: 133. Semgrep adds 20 that cppcheck's free addon does not check
+- MISRA engine alone: 133. The rule engine adds 20 that the MISRA engine does not check
   (mostly the latest-amendment C11 rules: atomics, threads, `_Generic`, alignment, `_Noreturn`).
 - **Missed by both (45):** 1.5 2.8 5.1 5.6 5.7 6.3 8.3 8.5 8.8 8.15 9.6 9.7 10.1 10.2 11.7 12.3 12.6
   14.3 17.9 17.11 17.12 17.13 18.2 18.9 20.12 21.2 21.14 21.17 21.22 21.23 21.26 22.1 22.3
@@ -34,14 +35,14 @@ and Semgrep CE 1.182.0 with `rules/semgrep/misra_gaps.yaml`. Regenerate with:
   them as **"not checked"**, never as passing.
 
 ## False alarms on compliant code (`tests/clean/`)
-- Semgrep: 0.
-- cppcheck: 8.7 on every external function (single-file check cannot see other callers, so it is
+- Rule engine: 0.
+- MISRA engine: 8.7 on every external function (single-file check cannot see other callers, so it is
   noise on save; only meaningful in a whole-project scan) and 1.4 on `_Generic` (policy question:
   MISRA Amendment 2 lists `_Generic` as an emergent feature).
 
 ## Real code: FreeRTOS kernel (7 files, 17k lines, template FreeRTOSConfig.h)
 
-| File | Lines | cppcheck time | Findings in the file itself | Findings in included headers | Semgrep time | Semgrep findings |
+| File | Lines | MISRA engine time | Findings in the file itself | Findings in included headers | Rule engine time (CLI, v0.2) | Rule engine findings |
 |---|---|---|---|---|---|---|
 | croutine.c | 407 | 3.8 s | 3 | 381 | 1.9 s | 0 |
 | event_groups.c | 887 | 7.0 s | 31 | 414 | 1.9 s | 0 |
@@ -53,17 +54,17 @@ and Semgrep CE 1.182.0 with `rules/semgrep/misra_gaps.yaml`. Regenerate with:
 
 (4 CPU Linux container.) Consequences for the extension: checks run in the background with
 cancellation (not "<100 ms"), and only findings located in the checked file are shown.
-Without the project's include paths and config headers cppcheck stops at the first `#error`
+Without the project's include paths and config headers the MISRA engine stops at the first `#error`
 (seen on FreeRTOS), so include paths/defines are an extension setting.
-The MISRA gap rules are text (regex) rules, so they don't depend on Semgrep's C parser. The
-KooSys guideline rules do: on FreeRTOS, Semgrep **could not parse `tasks.c` at all** and parsed
+The MISRA gap rules are text (regex) rules, so they don't depend on the rule engine's C parser. The
+KooSys guideline rules do: on FreeRTOS, the rule engine **could not parse `tasks.c` at all** and parsed
 `croutine.c` and `timers.c` only partly, because of macros such as `PRIVILEGED_DATA static List_t …`.
 Expect the same on AUTOSAR code that uses `FUNC()` or `P2VAR()` macros. The extension shows
 "file only partly parsed" in the status bar when this happens.
 
 ## MISRA directives
-The KooSys MISRA list contains only the rules, not the directives (Dir 1.1–5.3), and the free cppcheck
-addon does not check directives. A full MISRA C:2023 compliance claim also needs the directives:
+The KooSys MISRA list contains only the rules, not the directives (Dir 1.1–5.3), and the MISRA
+engine does not check directives. A full MISRA C:2023 compliance claim also needs the directives:
 review, or the project's qualified checker.
 
 ## KooSys coding guidelines (KooSys v2.1, Quantum Leaps, AUTOSAR StandardTypes)
@@ -73,7 +74,7 @@ The catalogue is `rules/koosys_rules.csv` (49 items). Contradictions and how the
 
 | Status | Items |
 |---|---|
-| Checked by Semgrep or the built-in text checks | 25 (24 on by default; 8.3 file names off) |
+| Checked by the rule engine or the built-in text checks | 25 (24 on by default; 8.3 file names off) |
 | Already covered by a MISRA rule (goto, single exit, braces, recursion, malloc, return values, pointer arithmetic, scope, explicit types) | 9 |
 | Not checkable (English comments, intent, error handling, ISO 26262 process…) | 15 |
 
@@ -91,7 +92,7 @@ False alarms found in review and fixed (2026-10-21). `tests/koosys/regressions.c
 | KSYS-DOC-01 | German header fields `Autor:` / `Datum:` | both languages accepted |
 
 FreeRTOS kernel (7 files, 17k lines; it follows its own style, so high counts are expected and are
-not false alarms). Text checks took 0.19 s for all 7 files, Semgrep 6.7 s.
+not false alarms). Text checks took 0.19 s for all 7 files. Since v0.3 the rule engine runs directly (no CLI wrapper): 0.15 s for list.c, 0.4 s for tasks.c, 1.0 s for queue.c.
 
 | Rule | Findings | Rule | Findings |
 |---|---|---|---|
@@ -108,7 +109,7 @@ What this means for adoption: on existing code the layout and comment rules prod
 hints. Start with `koosys.formatting: false` on legacy modules, or with a clang-format pass.
 
 ## Per-rule table (MISRA)
-| Rule | Category | Latest amendment | cppcheck | semgrep | Status |
+| Rule | Category | Latest amendment | MISRA engine | Rule engine | Status |
 |---|---|---|---|---|---|
 | 1.1 | Required | yes | no fixture | no fixture | no fixture |
 | 1.2 | Advisory | no | 0/1 | 1/1 | detected |

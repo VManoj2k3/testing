@@ -6,3 +6,4 @@ tsconfig.json
 out/test/**
 **/*.map
 .gitignore
+**/__pycache__/**

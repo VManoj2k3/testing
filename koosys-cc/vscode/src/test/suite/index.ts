@@ -40,10 +40,10 @@ export async function run(): Promise<void> {
   fs.writeFileSync(file, BAD);
   const doc = await vscode.workspace.openTextDocument(file);
   const editor = await vscode.window.showTextDocument(doc);
-  const ext = vscode.extensions.getExtension("koosys.koosys-c-checker")!;
+  const ext = vscode.extensions.getExtension("koosys.koosys-cc")!;
   await ext.activate();
 
-  // 1. Saving a violating file reports goto (15.1, cppcheck) and <stdarg.h> (17.1, Semgrep).
+  // 1. Saving a violating file reports goto (15.1, MISRA engine) and <stdarg.h> (17.1, rule engine).
   await editor.edit((e) => e.insert(new vscode.Position(BAD.split("\n").length - 1, 0), "\n"));
   await doc.save();
   await waitFor(() => codes(doc.uri).includes("MISRA 15.1") && codes(doc.uri).includes("MISRA 17.1"), 120000);

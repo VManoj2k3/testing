@@ -1,4 +1,5 @@
-// Engine invocation and output parsing. No vscode imports, so it can be unit-tested with plain node.
+// KooSys CC engine invocation and output parsing. No vscode imports, so it can be unit-tested with plain node.
+// Two bundled engines (see THIRD_PARTY_NOTICES.md): the MISRA engine and the pattern rule engine.
 import * as path from "path";
 
 export type Category = "Mandatory" | "Required" | "Advisory";
@@ -11,7 +12,7 @@ export interface Finding {
   column: number; // 1-based
   endLine: number;
   endColumn: number;
-  engine: "cppcheck" | "semgrep" | "koosys";
+  engine: "misra" | "rules" | "text";
   detail: string;
   level?: Level; // KooSys guideline findings; MISRA findings take their level from the rule category
 }
@@ -22,7 +23,7 @@ export interface RuleInfo {
 }
 
 const TAB = "\t";
-export const CPPCHECK_TEMPLATE = ["{file}", "{line}", "{column}", "{id}", "{message}"].join("\\t");
+export const MISRA_TEMPLATE = ["{file}", "{line}", "{column}", "{id}", "{message}"].join("\\t");
 const MISRA_ID = /^\d+\.\d+$/;
 
 export function parseRuleCsv(text: string): Map<string, RuleInfo> {
@@ -48,23 +49,43 @@ export function parseRuleTexts(text: string): Map<string, string> {
   return texts;
 }
 
-export function cppcheckArgs(file: string, includePaths: string[], defines: string[]): string[] {
+/** Paths of the engines shipped inside the extension (engines/, assembled by scripts/fetch-engines.py). */
+export interface EnginePaths {
+  misra: string;
+  misraAddon: string;
+  python: string;
+  rules: string;
+}
+
+export function bundledEngines(extensionDir: string, platform = process.platform): EnginePaths {
+  const e = path.join(extensionDir, "engines");
+  const exe = platform === "win32" ? ".exe" : "";
+  return {
+    misra: path.join(e, "misra", `koosyscc-misra${exe}`),
+    misraAddon: path.join(e, "misra", "addons", "misra.py"),
+    python: platform === "win32" ? path.join(e, "python", "python.exe") : path.join(e, "python", "bin", "python3.12"),
+    rules: path.join(e, "rules", `koosyscc-rules${exe}`),
+  };
+}
+
+export function misraArgs(file: string, includePaths: string[], defines: string[], eng: Pick<EnginePaths, "misraAddon" | "python">): string[] {
   return [
-    "--addon=misra",
+    `--addon=${eng.misraAddon}`,
+    `--addon-python=${eng.python}`,
     "--enable=style,warning,portability",
     "--report-type=misra-c-2023",
     "--language=c",
     "--std=c11",
     "-q",
-    `--template=${CPPCHECK_TEMPLATE}`,
+    `--template=${MISRA_TEMPLATE}`,
     ...includePaths.map((p) => `-I${p}`),
     ...defines.map((d) => `-D${d}`),
     file,
   ];
 }
 
-/** cppcheck writes findings to stderr; keep only MISRA-numbered ones (core checks are mapped by --report-type). */
-export function parseCppcheck(stderr: string): Finding[] {
+/** The MISRA engine writes findings to stderr; keep only MISRA-numbered ones (core checks are mapped by --report-type). */
+export function parseMisra(stderr: string): Finding[] {
   const out: Finding[] = [];
   for (const line of stderr.split(/\r?\n/)) {
     const parts = line.split(TAB);
@@ -75,29 +96,31 @@ export function parseCppcheck(stderr: string): Finding[] {
     const col = Math.max(1, parseInt(parts[2], 10) || 1);
     const msg = parts.slice(4).join(TAB);
     out.push({
-      rule: parts[3], file: parts[0], line: ln, column: col, endLine: ln, endColumn: col + 1, engine: "cppcheck",
-      // Without --rule-texts the addon's message is a placeholder; the hover shows our own text instead.
+      rule: parts[3], file: parts[0], line: ln, column: col, endLine: ln, endColumn: col + 1, engine: "misra",
+      // Without rule texts the addon's message is a placeholder; the hover shows our own text instead.
       detail: msg.startsWith("misra violation") ? "" : msg,
     });
   }
   return out;
 }
 
-export function semgrepArgs(file: string, rulesDir: string): string[] {
-  return ["scan", "--json", "--quiet", "--metrics=off", "--disable-version-check", "--config", rulesDir, file];
+/** Rule engine: one C file against one merged rules file (no network, no Python). */
+export function ruleEngineArgs(file: string, rulesFile: string): string[] {
+  return ["-rules", rulesFile, "-lang", "c", "-json", file];
 }
 
-export interface SemgrepParse {
+export interface RuleEngineResult {
   findings: Finding[];
   errors: string[];
 }
 
-export function parseSemgrep(stdout: string): SemgrepParse {
+export function parseRuleEngine(stdout: string): RuleEngineResult {
   let data: any;
   try {
-    data = JSON.parse(stdout || "{}");
+    const start = stdout.indexOf("{"); // progress dots may precede the JSON document
+    data = JSON.parse(start >= 0 ? stdout.slice(start) : "{}");
   } catch {
-    return { findings: [], errors: ["semgrep output was not JSON: " + stdout.slice(0, 200)] };
+    return { findings: [], errors: ["rule engine output was not JSON: " + stdout.slice(0, 200)] };
   }
   const findings: Finding[] = [];
   for (const r of data.results ?? []) {
@@ -108,11 +131,11 @@ export function parseSemgrep(stdout: string): SemgrepParse {
     }
     findings.push({
       rule: String(rule), file: r.path, line: r.start.line, column: r.start.col,
-      endLine: r.end.line, endColumn: r.end.col, engine: "semgrep", detail: r.extra.message ?? "",
+      endLine: r.end.line, endColumn: r.end.col, engine: "rules", detail: r.extra.message ?? "",
       ...(meta.koosys ? { level: (meta.level ?? "warning") as Level } : {}),
     });
   }
-  const errors = (data.errors ?? []).map((e: any) => String(e.message ?? e.type ?? "semgrep error"));
+  const errors = (data.errors ?? []).map((e: any) => String(e.message ?? e.error_type ?? e.type ?? "rule engine error"));
   return { findings, errors };
 }
 
@@ -125,7 +148,7 @@ export function samePath(a: string, b: string, platform = process.platform): boo
 }
 
 /**
- * Keep findings located in the checked file (cppcheck also reports included headers: ~350 per
+ * Keep findings located in the checked file (the MISRA engine also reports included headers: ~350 per
  * FreeRTOS file), drop disabled and whole-program rules, and merge duplicates across engines.
  */
 export function selectFindings(findings: Finding[], file: string, hidden: Set<string>): Finding[] {

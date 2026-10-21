@@ -1,0 +1,101 @@
+name: koosys-cc
+
+# Builds one self-contained KooSys CC package per platform (engines bundled), tests exactly that package
+# (coverage gates + end-to-end in VS Code with no settings), and attaches the packages to a release.
+on:
+  push:
+    paths: ["koosys-cc/**", ".github/workflows/koosys-cc.yml"]
+  workflow_dispatch:
+
+env:
+  MISRA_ENGINE_VERSION: "2.22.0"
+  PYTHONUTF8: "1"
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, target: win32-x64 }
+          - { os: ubuntu-22.04, target: linux-x64 }     # glibc 2.35: the package runs on Ubuntu 22.04+
+          - { os: macos-latest, target: darwin-arm64 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }   # only for the build/score scripts; the package bundles its own
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+
+      - name: Cache MISRA engine build
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: misra-engine
+          key: misra-engine-${{ env.MISRA_ENGINE_VERSION }}-${{ matrix.target }}-portable-v1
+      - name: Build MISRA engine (portable)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --quiet --depth 1 -b "$MISRA_ENGINE_VERSION" https://github.com/danmar/cppcheck misra-engine
+          extra=()
+          case "${{ matrix.target }}" in
+            win32-x64) extra=(-DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded) ;;  # no VC++ runtime needed
+            linux-x64) extra=("-DCMAKE_EXE_LINKER_FLAGS=-static-libstdc++ -static-libgcc") ;;
+          esac
+          # no FILESDIR: the engine finds cfg/ and addons/ next to its executable inside the extension
+          cmake -S misra-engine -B misra-engine/build -DCMAKE_BUILD_TYPE=Release -DUSE_MATCHCOMPILER=On "${extra[@]}"
+          cmake --build misra-engine/build --config Release -j 4
+
+      - name: Assemble bundled engines
+        working-directory: koosys-cc/vscode
+        run: python scripts/fetch-engines.py --target ${{ matrix.target }} --misra-build ../../misra-engine/build --misra-src ../../misra-engine
+      - name: Extension unit tests
+        working-directory: koosys-cc/vscode
+        run: npm ci && npm run bundle-rules && npm test
+      - name: Coverage gates on the bundled engines (MISRA >= 153, KooSys 24, no false alarms on compliant code)
+        run: |
+          python koosys-cc/tests/score.py --min-detected 153 --min-ksys 24 \
+            --md coverage-${{ matrix.target }}.md --ksys-md koosys-${{ matrix.target }}.md
+      - name: End-to-end test in VS Code (no settings, no engines on PATH)
+        working-directory: koosys-cc/vscode
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a node out/test/runVscode.js; else node out/test/runVscode.js; fi
+      - name: Package
+        working-directory: koosys-cc/vscode
+        run: npm run package:target -- ${{ matrix.target }} && ls -la *.vsix
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: koosys-cc-${{ matrix.target }}
+          path: |
+            coverage-*.md
+            koosys-*.md
+            koosys-cc/vscode/*.vsix
+          if-no-files-found: ignore
+
+  release:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dist }
+      - name: Publish packages to the release for this version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./koosys-cc/vscode/package.json').version")
+          tag="koosys-cc-v$version"
+          files=$(find dist -name '*.vsix')
+          echo "$files"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$GITHUB_SHA" --title "KooSys CC $version" \
+              --notes "KooSys CC $version: one package per platform, engines included. Install: VS Code → Extensions → … → Install from VSIX." --prerelease
+          fi
+          gh release upload "$tag" $files --clobber

@@ -1,6 +1,6 @@
 import { strict as assert } from "assert";
 import { test } from "node:test";
-import { parseSemgrep } from "../engines";
+import { parseRuleEngine } from "../engines";
 import { DEFAULT_TEXT_OPTIONS, checkText, scan } from "../textchecks";
 
 const HEADER = "// File: m.c\n// Purpose: test\n// Author: a\n// Date: 2026-10-21\n";
@@ -66,8 +66,8 @@ test("layout rules and file names", () => {
   assert.equal(rules(src, "mod_a.c", { ...DEFAULT_TEXT_OPTIONS, formatting: false }).filter((x) => x.startsWith("KSYS-FMT")).length, 0);
 });
 
-test("Semgrep KooSys findings carry their level", () => {
-  const r = parseSemgrep(JSON.stringify({
+test("rule engine KooSys findings carry their level", () => {
+  const r = parseRuleEngine(JSON.stringify({
     results: [{ path: "a.c", start: { line: 3, col: 1 }, end: { line: 3, col: 9 },
       extra: { message: "KSYS-CMT-01 (KooSys 4.2): use //", metadata: { koosys: "KSYS-CMT-01", level: "info" } } }],
   }));

@@ -1,8 +1,8 @@
 {
-  "name": "koosys-c-checker",
-  "displayName": "KooSys C Checker",
-  "description": "Checks C files against the KooSys MISRA list and KooSys coding guidelines on save, offline (cppcheck MISRA addon + Semgrep + built-in text checks).",
-  "version": "0.2.1",
+  "name": "koosys-cc",
+  "displayName": "KooSys CC",
+  "description": "KooSys CC: checks C files against the KooSys MISRA list and KooSys coding guidelines on save. Fully offline; all engines are built in.",
+  "version": "0.3.0",
   "publisher": "koosys",
   "private": true,
   "license": "UNLICENSED",
@@ -25,30 +25,20 @@
     "commands": [
       {
         "command": "koosys.checkFile",
-        "title": "KooSys: Check Current File"
+        "title": "KooSys CC: Check Current File"
       },
       {
         "command": "koosys.showCoverage",
-        "title": "KooSys: Show Rule Coverage"
+        "title": "KooSys CC: Show Rule Coverage"
       }
     ],
     "configuration": {
-      "title": "KooSys C Checker",
+      "title": "KooSys CC",
       "properties": {
         "koosys.runOnSave": {
           "type": "boolean",
           "default": true,
           "description": "Check .c/.h files when they are saved."
-        },
-        "koosys.cppcheckPath": {
-          "type": "string",
-          "default": "cppcheck",
-          "description": "cppcheck executable (2.22 or later, with the misra addon)."
-        },
-        "koosys.semgrepPath": {
-          "type": "string",
-          "default": "semgrep",
-          "description": "Semgrep executable. Empty disables Semgrep."
         },
         "koosys.includePaths": {
           "type": "array",
@@ -56,7 +46,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "Include directories passed to cppcheck (-I). ${workspaceFolder} is expanded. Without the project's config headers cppcheck may stop at an #error."
+          "description": "Extra include directories (added to the automatically found ones). ${workspaceFolder} is expanded."
         },
         "koosys.defines": {
           "type": "array",
@@ -64,7 +54,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "Preprocessor defines for cppcheck (-D), e.g. \"CPU_FREQ=8000000\"."
+          "description": "Preprocessor defines (-D), e.g. \"CPU_FREQ=8000000\". Needed only when a header stops with #error without them."
         },
         "koosys.disabledRules": {
           "type": "array",
@@ -142,6 +132,11 @@
           "type": "boolean",
           "default": false,
           "description": "KSYS-FILE-02: check DOS 8.3 file names (off: contradicts KooSys 4.1's own example module_name.c)."
+        },
+        "koosys.autoIncludePaths": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use every workspace folder that contains a header as an include path (no configuration needed)."
         }
       }
     }
@@ -151,7 +146,9 @@
     "bundle-rules": "node scripts/bundle-rules.js",
     "test": "npm run compile && node --test out/test/engines.test.js out/test/textchecks.test.js",
     "test:vscode": "npm run compile && node out/test/runVscode.js",
-    "package": "npm run bundle-rules && npm run compile && vsce package --no-dependencies --skip-license"
+    "package": "npm run bundle-rules && npm run compile && vsce package --no-dependencies --skip-license",
+    "package:target": "npm run bundle-rules && npm run compile && vsce package --no-dependencies --skip-license --target",
+    "fetch-engines": "python scripts/fetch-engines.py"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

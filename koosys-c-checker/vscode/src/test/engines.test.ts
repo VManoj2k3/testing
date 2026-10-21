@@ -57,7 +57,7 @@ test("rule csv, texts and descriptions", () => {
   assert.equal(texts.get("15.1"), "The goto statement should not be used, ever");
   const f: Finding = { rule: "15.1", file, line: 1, column: 1, endLine: 1, endColumn: 2, engine: "cppcheck", detail: "" };
   assert.equal(describe(f, rules.get("15.1"), texts.get("15.1")),
-    "MISRA C:2012 Rule 15.1 (Advisory): The goto statement should not be used, ever");
+    "MISRA C:2023 Rule 15.1 (Advisory): The goto statement should not be used, ever");
   assert.match(describe(f, undefined, undefined), /see the KooSys MISRA rule list/);
 });
 

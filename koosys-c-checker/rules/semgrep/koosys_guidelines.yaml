@@ -40,7 +40,7 @@ rules:
     pattern-either:
       - pattern-regex: '(?m)^[ \t]*#[ \t]*define[ \t]+(?![A-Z][A-Z0-9_]*\b)[A-Za-z_]\w*'
       # enumerators: flags the enum when any enumerator is not UPPER_CASE
-      - pattern-regex: '\benum\b[^{;]*\{[^}]*?(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]*[a-z])[A-Za-z_]\w*\s*[,=}]'
+      - pattern-regex: '\benum\b[^{;]*\{(?:[^}]*?,)??\s*(?=[A-Za-z0-9_]*[a-z])[A-Za-z_]\w*\s*[,=}]'
 
   - id: ksys-name-05-typedef-case
     languages: [c]
@@ -116,14 +116,16 @@ rules:
                   $R $X(...) { ... }
           - metavariable-regex:
               metavariable: $X
-              regex: '^(E[0-9A-Z]|is[a-z]|to[a-z]|LC_|SIG[_A-Z]|str[a-z]|mem[a-z]|wcs[a-z])'
+              # C library future names look like strfoo/isvalid; module-prefixed names such as
+              # string_utils_count or memory_pool_size contain underscores and cannot collide
+              regex: '^((E[0-9A-Z]|is[a-z]|to[a-z]|str[a-z]|mem[a-z]|wcs[a-z])[A-Za-z0-9]*|LC_\w*|SIG[_A-Z]\w*)$'
           - focus-metavariable: $X
 
   # ---------------------------------------------------------------- types
   - id: ksys-type-01-raw-integer-type
     languages: [c]
     severity: WARNING
-    message: "KSYS-TYPE-01 (QL 4 / AUTOSAR SRS_BSW_00304): raw C integer type; use a fixed-width type (uint8_t... or AUTOSAR uint8...)."
+    message: "KSYS-TYPE-01 (QL 4 / AUTOSAR SRS_BSW_00304): raw C integer type; use a fixed-width type (uint8_t... or AUTOSAR uint8...). Bit-fields are exempt (MISRA 6.1)."
     metadata: {koosys: KSYS-TYPE-01, level: warning}
     patterns:
       - pattern-either:
@@ -135,6 +137,7 @@ rules:
               $T $X(...) { ... }
       - pattern-not: |
           int main(...) { ... }
+      - pattern-not-regex: ':\s*[0-9A-Za-z_]+\s*;'  # bit-fields: MISRA 6.1 requires (unsigned) int there
       - metavariable-regex:
           metavariable: $T
           regex: '^(const\s+|volatile\s+|static\s+|extern\s+)*(unsigned|signed|short|long|int)\b'

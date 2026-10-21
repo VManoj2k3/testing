@@ -256,7 +256,7 @@ export function checkText(file: string, src: string, opt: TextCheckOptions = DEF
     header.push(c.text);
   }
   const headerText = header.join("\n");
-  if (!headerText || !/author/i.test(headerText) || !/date/i.test(headerText)) {
+  if (!headerText || !/auth?or/i.test(headerText) || !/(date|datum)/i.test(headerText)) { // English or German fields
     out.push(finding(file, "KSYS-DOC-01", "warning", 1, 1,
       "file must start with a header comment stating the module purpose, author and date"));
   }

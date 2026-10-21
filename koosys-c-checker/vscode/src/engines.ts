@@ -52,7 +52,7 @@ export function cppcheckArgs(file: string, includePaths: string[], defines: stri
   return [
     "--addon=misra",
     "--enable=style,warning,portability",
-    "--report-type=misra-c-2012",
+    "--report-type=misra-c-2023",
     "--language=c",
     "--std=c11",
     "-q",
@@ -150,7 +150,7 @@ export function describe(f: Finding, info: RuleInfo | undefined, text: string | 
   }
   const cat = info ? ` (${info.category})` : "";
   const body = text || f.detail || "see the KooSys MISRA rule list";
-  return `MISRA C:2012 Rule ${f.rule}${cat}: ${body}`;
+  return `MISRA C:2023 Rule ${f.rule}${cat}: ${body}`;
 }
 
 export function levelOf(f: Finding, info: RuleInfo | undefined): Level {

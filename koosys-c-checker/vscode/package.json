@@ -2,7 +2,7 @@
   "name": "koosys-c-checker",
   "displayName": "KooSys C Checker",
   "description": "Checks C files against the KooSys MISRA list and KooSys coding guidelines on save, offline (cppcheck MISRA addon + Semgrep + built-in text checks).",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "koosys",
   "private": true,
   "license": "UNLICENSED",
@@ -156,7 +156,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "~1.90.0",
-    "@vscode/test-electron": "^2.4.0",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.0.0",
     "typescript": "^5.4.0"
   }

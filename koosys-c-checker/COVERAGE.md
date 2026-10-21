@@ -1,6 +1,7 @@
 # Rule coverage: KooSys MISRA list (200 rules) and KooSys coding guidelines
 
-Measured 2026-10-21 with cppcheck 2.22.0 (free MISRA addon + core checks, `--report-type=misra-c-2012`)
+Measured 2026-10-21 with cppcheck 2.22.0 (free MISRA addon + core checks, `--report-type=misra-c-2023`,
+matching KooSys guideline v2.1, which moved to MISRA C:2023; the 2012 mode gave identical results)
 and Semgrep CE 1.182.0 with `rules/semgrep/misra_gaps.yaml`. Regenerate with:
 
     python tests/score.py --cppcheck <cppcheck> --semgrep <semgrep> --md COVERAGE_table.md
@@ -60,6 +61,11 @@ KooSys guideline rules do: on FreeRTOS, Semgrep **could not parse `tasks.c` at a
 Expect the same on AUTOSAR code that uses `FUNC()` or `P2VAR()` macros. The extension shows
 "file only partly parsed" in the status bar when this happens.
 
+## MISRA directives
+The KooSys MISRA list contains only the rules, not the directives (Dir 1.1–5.3), and the free cppcheck
+addon does not check directives. A full MISRA C:2023 compliance claim also needs the directives:
+review, or the project's qualified checker.
+
 ## KooSys coding guidelines (KooSys v2.1, Quantum Leaps, AUTOSAR StandardTypes)
 
 The catalogue is `rules/koosys_rules.csv` (49 items). Contradictions and how they were resolved are in
@@ -73,6 +79,16 @@ The catalogue is `rules/koosys_rules.csv` (49 items). Contradictions and how the
 
 Fixtures (`tests/koosys/`): **all 24 enabled rules detected**, and **0 findings** on the compliant
 module `tests/koosys/clean/` (CI fails otherwise).
+
+False alarms found in review and fixed (2026-10-21). `tests/koosys/regressions.c` marks each case with
+`NOEXPECT`, and CI fails if one comes back:
+
+| Rule | Was flagged (correct code) | Fix |
+|---|---|---|
+| KSYS-TYPE-01 | bit-fields `unsigned int flag : 1;`, which MISRA 6.1 requires | bit-fields exempt |
+| KSYS-NAME-08 | `string_utils_count`, `memory_pool_size` (reserved `str…`/`mem…` prefixes) | library prefixes only for underscore-free names such as `strcount` |
+| KSYS-NAME-04 | lowercase identifiers inside enum initialiser expressions | only enumerator names are checked |
+| KSYS-DOC-01 | German header fields `Autor:` / `Datum:` | both languages accepted |
 
 FreeRTOS kernel (7 files, 17k lines; it follows its own style, so high counts are expected and are
 not false alarms). Text checks took 0.19 s for all 7 files, Semgrep 6.7 s.

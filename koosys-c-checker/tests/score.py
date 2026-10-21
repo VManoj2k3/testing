@@ -20,7 +20,8 @@ GROUPS = [["ctu_a.c", "ctu_b.c"]]  # analysed together (cross-file rules)
 TOL = 2  # tools sometimes report the opening line of a construct instead of the marked one
 KFIX = HERE / "koosys"
 KSYS_CSV = HERE.parent / "rules" / "koosys_rules.csv"
-KSYS_EXPECT = re.compile(r"EXPECT (KSYS-[A-Z]+-[0-9]+)")
+KSYS_EXPECT = re.compile(r"(?<!NO)EXPECT (KSYS-[A-Z]+-[0-9]+)")
+KSYS_NOEXPECT = re.compile(r"NOEXPECT (KSYS-[A-Z]+-[0-9]+)")  # fixed false alarms: must stay clean
 
 
 def expectations():
@@ -42,7 +43,7 @@ def run_cppcheck(exe):
     found = set()
     for unit in units():
         cmd = [exe, "--std=c11", "--addon=misra", "--enable=style,warning,portability",
-               "--report-type=misra-c-2012", "--template={file}:{line}:{id}", "-q", "-I", str(FIX),
+               "--report-type=misra-c-2023", "--template={file}:{line}:{id}", "-q", "-I", str(FIX),
                *[str(FIX / u) for u in unit]]
         out = subprocess.run(cmd, capture_output=True, text=True).stderr
         for line in out.splitlines():
@@ -82,12 +83,16 @@ def run_koosys(semgrep, rules_dir, textchecks, files):
 
 def score_koosys(semgrep, rules_dir, textchecks, md):
     fixtures = sorted(p for p in KFIX.iterdir() if p.is_file())
-    exp = defaultdict(set)
+    exp, noexp = defaultdict(set), set()
     for f in fixtures:
         for n, line in enumerate(f.read_text().splitlines(), 1):
             for rule in KSYS_EXPECT.findall(line):
                 exp[rule].add((f.name, n))
-    res = score(run_koosys(semgrep, rules_dir, textchecks, fixtures), exp)
+            for rule in KSYS_NOEXPECT.findall(line):
+                noexp.add((rule, f.name, n))
+    found = run_koosys(semgrep, rules_dir, textchecks, fixtures)
+    res = score(found, exp)
+    regressions = sorted(noexp & found)
     clean = sorted(run_koosys(semgrep, rules_dir, textchecks, sorted((KFIX / "clean").iterdir())))
     rows = [r for r in csv.DictReader(open(KSYS_CSV)) if r["engine"] in ("semgrep", "textchecks")]
     detected = 0
@@ -101,8 +106,9 @@ def score_koosys(semgrep, rules_dir, textchecks, md):
     if md:
         Path(md).write_text("\n".join(lines) + "\n")
     print(f"koosys: {detected}/{len(rows)} tool-checked rules detected on fixtures; "
-          f"{len(clean)} finding(s) on compliant code {clean[:5]}", file=sys.stderr)
-    return detected, clean
+          f"{len(clean)} finding(s) on compliant code {clean[:5]}; "
+          f"{len(regressions)}/{len(noexp)} known false alarms back {regressions}", file=sys.stderr)
+    return detected, clean + regressions
 
 
 def score(found, exp):
@@ -165,7 +171,7 @@ def main():
         if detected < a.min_ksys:
             sys.exit(f"KooSys coverage regression: {detected} rules detected, expected at least {a.min_ksys}")
         if clean:
-            sys.exit(f"KooSys findings on compliant code: {clean}")
+            sys.exit(f"KooSys findings on compliant code or NOEXPECT lines: {clean}")
 
 
 if __name__ == "__main__":

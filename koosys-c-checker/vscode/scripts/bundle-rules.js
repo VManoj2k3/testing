@@ -9,5 +9,6 @@ for (const f of fs.readdirSync(path.join(src, "rules", "semgrep"))) {
   fs.copyFileSync(path.join(src, "rules", "semgrep", f), path.join(dst, "semgrep", f));
 }
 fs.copyFileSync(path.join(src, "rules", "misra_rules.csv"), path.join(dst, "misra_rules.csv"));
+fs.copyFileSync(path.join(src, "rules", "koosys_rules.csv"), path.join(dst, "koosys_rules.csv"));
 fs.copyFileSync(path.join(src, "COVERAGE.md"), path.join(dst, "COVERAGE.md"));
 console.log("rules bundled into", dst);

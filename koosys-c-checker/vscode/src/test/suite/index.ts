@@ -51,6 +51,10 @@ export async function run(): Promise<void> {
   assert.equal(d.range.start.line, 6);
   assert.match(d.message, /Rule 15\.1 \(Advisory\)/);
   assert.ok(!codes(doc.uri).includes("MISRA 8.7"), "whole-program rule 8.7 must be hidden on save");
+  // KooSys guidelines: 'demo' is not Module_Function style (warning); no assertions is Info level.
+  const all = vscode.languages.getDiagnostics(doc.uri);
+  assert.equal(all.find((x) => x.code === "KSYS-NAME-02")?.severity, vscode.DiagnosticSeverity.Warning);
+  assert.equal(all.find((x) => x.code === "KSYS-FUNC-02")?.severity, vscode.DiagnosticSeverity.Information);
 
   // 2. Fixing the code and saving clears those diagnostics.
   const fixed = BAD.replace("#include <stdarg.h>\n", "")

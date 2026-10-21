@@ -1,12 +1,14 @@
-"""Score engines against the MISRA fixtures.
+"""Score engines against the MISRA fixtures (tests/misra) and the KooSys guideline fixtures (tests/koosys).
 
 Each fixture line ending in `// EXPECT <rule>` must be flagged with that rule (within TOL lines).
 Findings for a rule on lines not marked with that rule are counted as "other" (fixtures
 violate other rules incidentally, so these need a human look before being called false alarms).
 
 Usage: python score.py [--cppcheck PATH] [--semgrep PATH] [--rules DIR] [--json OUT] [--md OUT] [--min-detected N]
+                       [--textchecks "node vscode/out/cli.js"] [--min-ksys N] [--ksys-md OUT]
+KooSys scoring needs --semgrep and --textchecks; files in tests/koosys/clean must produce no KooSys findings.
 """
-import argparse, csv, json, re, subprocess, sys
+import argparse, csv, json, re, shlex, subprocess, sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -14,8 +16,11 @@ HERE = Path(__file__).resolve().parent
 FIX = HERE / "misra"
 RULES_CSV = HERE.parent / "rules" / "misra_rules.csv"
 EXPECT = re.compile(r"EXPECT ([0-9]+\.[0-9]+)")
-GROUPS = [["ctu_a.c", "ctu_b.c"]]
-TOL = 2  # tools sometimes report the opening line of a construct instead of the marked one  # analysed together (cross-file rules)
+GROUPS = [["ctu_a.c", "ctu_b.c"]]  # analysed together (cross-file rules)
+TOL = 2  # tools sometimes report the opening line of a construct instead of the marked one
+KFIX = HERE / "koosys"
+KSYS_CSV = HERE.parent / "rules" / "koosys_rules.csv"
+KSYS_EXPECT = re.compile(r"EXPECT (KSYS-[A-Z]+-[0-9]+)")
 
 
 def expectations():
@@ -60,6 +65,46 @@ def run_semgrep(exe, rules_dir):
     return found
 
 
+def run_koosys(semgrep, rules_dir, textchecks, files):
+    """KooSys findings from Semgrep (metadata.koosys) and the extension's text checks."""
+    found = set()
+    out = subprocess.run([semgrep, "scan", "--json", "--metrics=off", "--disable-version-check", "--quiet",
+                          "--config", str(rules_dir), *map(str, files)], capture_output=True, text=True).stdout
+    for r in json.loads(out or "{}").get("results", []):
+        rule = (r.get("extra", {}).get("metadata") or {}).get("koosys")
+        if rule:
+            found.add((rule, Path(r["path"]).name, r["start"]["line"]))
+    out = subprocess.run([*shlex.split(textchecks), *map(str, files)], capture_output=True, text=True).stdout
+    for f in json.loads(out or "[]"):
+        found.add((f["rule"], Path(f["file"]).name, f["line"]))
+    return found
+
+
+def score_koosys(semgrep, rules_dir, textchecks, md):
+    fixtures = sorted(p for p in KFIX.iterdir() if p.is_file())
+    exp = defaultdict(set)
+    for f in fixtures:
+        for n, line in enumerate(f.read_text().splitlines(), 1):
+            for rule in KSYS_EXPECT.findall(line):
+                exp[rule].add((f.name, n))
+    res = score(run_koosys(semgrep, rules_dir, textchecks, fixtures), exp)
+    clean = sorted(run_koosys(semgrep, rules_dir, textchecks, sorted((KFIX / "clean").iterdir())))
+    rows = [r for r in csv.DictReader(open(KSYS_CSV)) if r["engine"] in ("semgrep", "textchecks")]
+    detected = 0
+    lines = ["| Rule | Source | Level | Engine | Fixture | Status |", "|---|---|---|---|---|---|"]
+    for r in rows:
+        s_ = res.get(r["id"])
+        cell = "no fixture" if s_ is None else f"{s_['detected']}/{s_['expected']}" + (f" (+{s_['other']})" if s_["other"] else "")
+        ok = s_ is not None and s_["detected"] == s_["expected"]
+        detected += ok
+        lines.append(f"| {r['id']} | {r['source']} | {r['level']} | {r['engine']} | {cell} | {r['status']} |")
+    if md:
+        Path(md).write_text("\n".join(lines) + "\n")
+    print(f"koosys: {detected}/{len(rows)} tool-checked rules detected on fixtures; "
+          f"{len(clean)} finding(s) on compliant code {clean[:5]}", file=sys.stderr)
+    return detected, clean
+
+
 def score(found, exp):
     res = {}
     for rule, sites in exp.items():
@@ -79,6 +124,9 @@ def main():
     ap.add_argument("--json")
     ap.add_argument("--md")
     ap.add_argument("--min-detected", type=int, default=0, help="exit 1 if fewer rules are detected (CI regression gate)")
+    ap.add_argument("--textchecks", help='command running the extension text checks, e.g. "node vscode/out/cli.js"')
+    ap.add_argument("--min-ksys", type=int, default=0, help="exit 1 if fewer KooSys rules are detected")
+    ap.add_argument("--ksys-md")
     a = ap.parse_args()
     exp = expectations()
     engines = {}
@@ -112,6 +160,12 @@ def main():
     print(dict(totals), file=sys.stderr)
     if totals["detected"] < a.min_detected:
         sys.exit(f"coverage regression: {totals['detected']} rules detected, expected at least {a.min_detected}")
+    if a.semgrep and a.textchecks:
+        detected, clean = score_koosys(a.semgrep, a.rules, a.textchecks, a.ksys_md)
+        if detected < a.min_ksys:
+            sys.exit(f"KooSys coverage regression: {detected} rules detected, expected at least {a.min_ksys}")
+        if clean:
+            sys.exit(f"KooSys findings on compliant code: {clean}")
 
 
 if __name__ == "__main__":

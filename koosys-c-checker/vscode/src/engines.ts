@@ -2,16 +2,18 @@
 import * as path from "path";
 
 export type Category = "Mandatory" | "Required" | "Advisory";
+export type Level = "error" | "warning" | "info";
 
 export interface Finding {
-  rule: string; // MISRA rule number, e.g. "15.1"
+  rule: string; // MISRA rule number ("15.1") or KooSys guideline id ("KSYS-NAME-01")
   file: string;
   line: number; // 1-based
   column: number; // 1-based
   endLine: number;
   endColumn: number;
-  engine: "cppcheck" | "semgrep";
+  engine: "cppcheck" | "semgrep" | "koosys";
   detail: string;
+  level?: Level; // KooSys guideline findings; MISRA findings take their level from the rule category
 }
 
 export interface RuleInfo {
@@ -99,13 +101,15 @@ export function parseSemgrep(stdout: string): SemgrepParse {
   }
   const findings: Finding[] = [];
   for (const r of data.results ?? []) {
-    const rule = r?.extra?.metadata?.misra;
+    const meta = r?.extra?.metadata ?? {};
+    const rule = meta.misra ?? meta.koosys;
     if (!rule) {
       continue;
     }
     findings.push({
       rule: String(rule), file: r.path, line: r.start.line, column: r.start.col,
       endLine: r.end.line, endColumn: r.end.col, engine: "semgrep", detail: r.extra.message ?? "",
+      ...(meta.koosys ? { level: (meta.level ?? "warning") as Level } : {}),
     });
   }
   const errors = (data.errors ?? []).map((e: any) => String(e.message ?? e.type ?? "semgrep error"));
@@ -141,9 +145,31 @@ export function selectFindings(findings: Finding[], file: string, hidden: Set<st
 }
 
 export function describe(f: Finding, info: RuleInfo | undefined, text: string | undefined): string {
+  if (f.rule.startsWith("KSYS-")) {
+    return f.detail.startsWith(f.rule) ? f.detail : `${f.rule}: ${f.detail}`;
+  }
   const cat = info ? ` (${info.category})` : "";
   const body = text || f.detail || "see the KooSys MISRA rule list";
   return `MISRA C:2012 Rule ${f.rule}${cat}: ${body}`;
+}
+
+export function levelOf(f: Finding, info: RuleInfo | undefined): Level {
+  if (f.level) {
+    return f.level;
+  }
+  return info?.category === "Advisory" ? "warning" : "error";
+}
+
+/** KooSys guideline catalogue (rules/koosys_rules.csv): ids per status. */
+export function parseKsysCatalogue(text: string): Map<string, string[]> {
+  const byStatus = new Map<string, string[]>();
+  for (const line of text.split(/\r?\n/).slice(1)) {
+    const cols = line.split(",");
+    if (cols.length >= 5 && cols[0]) {
+      byStatus.set(cols[4], [...(byStatus.get(cols[4]) ?? []), cols[0]]);
+    }
+  }
+  return byStatus;
 }
 
 /** Rules in the list that neither engine checks (from COVERAGE measurement), for the status bar. */

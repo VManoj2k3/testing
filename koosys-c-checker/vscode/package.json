@@ -1,39 +1,155 @@
 {
   "name": "koosys-c-checker",
   "displayName": "KooSys C Checker",
-  "description": "Checks C files against the KooSys MISRA rule list on save, offline (cppcheck MISRA addon + Semgrep).",
-  "version": "0.1.0",
+  "description": "Checks C files against the KooSys MISRA list and KooSys coding guidelines on save, offline (cppcheck MISRA addon + Semgrep + built-in text checks).",
+  "version": "0.2.0",
   "publisher": "koosys",
   "private": true,
   "license": "UNLICENSED",
-  "repository": { "type": "git", "url": "https://github.com/vmanoj2k3/testing" },
-  "engines": { "vscode": "^1.90.0" },
-  "categories": ["Linters"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vmanoj2k3/testing"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Linters"
+  ],
   "main": "./out/extension.js",
-  "activationEvents": ["onLanguage:c", "onLanguage:cpp"],
+  "activationEvents": [
+    "onLanguage:c",
+    "onLanguage:cpp"
+  ],
   "contributes": {
     "commands": [
-      { "command": "koosys.checkFile", "title": "KooSys: Check Current File" },
-      { "command": "koosys.showCoverage", "title": "KooSys: Show Rule Coverage" }
+      {
+        "command": "koosys.checkFile",
+        "title": "KooSys: Check Current File"
+      },
+      {
+        "command": "koosys.showCoverage",
+        "title": "KooSys: Show Rule Coverage"
+      }
     ],
     "configuration": {
       "title": "KooSys C Checker",
       "properties": {
-        "koosys.runOnSave": { "type": "boolean", "default": true, "description": "Check .c/.h files when they are saved." },
-        "koosys.cppcheckPath": { "type": "string", "default": "cppcheck", "description": "cppcheck executable (2.22 or later, with the misra addon)." },
-        "koosys.semgrepPath": { "type": "string", "default": "semgrep", "description": "Semgrep executable. Empty disables Semgrep." },
-        "koosys.includePaths": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Include directories passed to cppcheck (-I). ${workspaceFolder} is expanded. Without the project's config headers cppcheck may stop at an #error." },
-        "koosys.defines": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Preprocessor defines for cppcheck (-D), e.g. \"CPU_FREQ=8000000\"." },
-        "koosys.disabledRules": { "type": "array", "items": { "type": "string" }, "default": [], "description": "MISRA rule numbers not to report, e.g. [\"15.5\"]." },
-        "koosys.wholeProgramRules": { "type": "array", "items": { "type": "string" }, "default": ["5.8", "5.9", "8.5", "8.6", "8.7"], "description": "Rules that need the whole program; hidden in single-file checks because they are wrong there (e.g. 8.7 flags every public function)." },
-        "koosys.ruleTextsFile": { "type": "string", "default": "", "description": "Optional CSV (rule,text) with the guideline text shown in hovers. Not bundled: the text belongs to the company document." }
+        "koosys.runOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check .c/.h files when they are saved."
+        },
+        "koosys.cppcheckPath": {
+          "type": "string",
+          "default": "cppcheck",
+          "description": "cppcheck executable (2.22 or later, with the misra addon)."
+        },
+        "koosys.semgrepPath": {
+          "type": "string",
+          "default": "semgrep",
+          "description": "Semgrep executable. Empty disables Semgrep."
+        },
+        "koosys.includePaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Include directories passed to cppcheck (-I). ${workspaceFolder} is expanded. Without the project's config headers cppcheck may stop at an #error."
+        },
+        "koosys.defines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Preprocessor defines for cppcheck (-D), e.g. \"CPU_FREQ=8000000\"."
+        },
+        "koosys.disabledRules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Rule ids not to report, e.g. [\"15.5\", \"KSYS-FUNC-02\"]."
+        },
+        "koosys.wholeProgramRules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "5.8",
+            "5.9",
+            "8.5",
+            "8.6",
+            "8.7"
+          ],
+          "description": "Rules that need the whole program; hidden in single-file checks because they are wrong there (e.g. 8.7 flags every public function)."
+        },
+        "koosys.ruleTextsFile": {
+          "type": "string",
+          "default": "",
+          "description": "Optional CSV (rule,text) with the guideline text shown in hovers. Not bundled: the text belongs to the company document."
+        },
+        "koosys.formatting": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report layout rules (tabs, line length, LF endings, 4-space indent) as Info."
+        },
+        "koosys.maxLineLength": {
+          "type": "number",
+          "default": 78,
+          "description": "KSYS-FMT-02: maximum line length (KooSys 4.8)."
+        },
+        "koosys.maxFunctionLines": {
+          "type": "number",
+          "default": 60,
+          "description": "KSYS-FUNC-01: maximum function body length in lines (\"one page\")."
+        },
+        "koosys.minAssertions": {
+          "type": "number",
+          "default": 2,
+          "description": "KSYS-FUNC-02: minimum assertions per function (0 disables)."
+        },
+        "koosys.assertionMacros": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "assert",
+            "Q_ASSERT",
+            "Q_REQUIRE",
+            "Q_ENSURE",
+            "Q_INVARIANT",
+            "Q_ALLEGE"
+          ],
+          "description": "Calls counted as assertions for KSYS-FUNC-02."
+        },
+        "koosys.requirementIdPattern": {
+          "type": "string",
+          "default": "",
+          "description": "KSYS-DOC-02: regular expression a function's doxygen comment must contain (e.g. \"SWRS-[A-Z]+-\\\\d+\"). Empty = not checked."
+        },
+        "koosys.moduleAbbreviation": {
+          "type": "string",
+          "default": "",
+          "description": "KSYS-NAME-03: required global-variable prefix for this project (without the underscore). Empty = any lowercase prefix."
+        },
+        "koosys.checkDosFileNames": {
+          "type": "boolean",
+          "default": false,
+          "description": "KSYS-FILE-02: check DOS 8.3 file names (off: contradicts KooSys 4.1's own example module_name.c)."
+        }
       }
     }
   },
   "scripts": {
     "compile": "tsc -p .",
     "bundle-rules": "node scripts/bundle-rules.js",
-    "test": "npm run compile && node --test out/test/engines.test.js",
+    "test": "npm run compile && node --test out/test/engines.test.js out/test/textchecks.test.js",
     "test:vscode": "npm run compile && node out/test/runVscode.js",
     "package": "npm run bundle-rules && npm run compile && vsce package --no-dependencies --skip-license"
   },

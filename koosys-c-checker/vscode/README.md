@@ -1,18 +1,32 @@
 # KooSys C Checker (VS Code)
 
-Checks `.c`/`.h` files against the KooSys MISRA rule list (`KooSys_MisraRules.pdf`, 200 rules) when you
-save. Everything runs on your machine: cppcheck (MISRA addon) and Semgrep with bundled rules.
+Checks `.c`/`.h` files when you save against:
+- the KooSys MISRA rule list (`KooSys_MisraRules.pdf`, 200 rules);
+- the KooSys coding guidelines (KooSys v2.1 with the Quantum Leaps standard and AUTOSAR StandardTypes):
+  naming, types, comments, documentation, function size, layout.
+
+Everything runs on your machine: cppcheck (MISRA addon), Semgrep with bundled rules, and built-in
+TypeScript text checks.
 No code, metrics or telemetry leave the workstation. Semgrep runs with metrics and the version check off.
 
 **This is an early-warning tool, not a qualified MISRA checker.** It detects 153 of the 200 rules
-on seeded test cases. 46 rules are not checked at all. See "KooSys: Show Rule Coverage", or
-`COVERAGE.md`. A clean result does not mean the file is MISRA-compliant. ISO 26262 evidence still
+on seeded test cases, and 46 are not checked at all. Of the 49 KooSys guideline items, 25 are
+checked, 9 map to MISRA rules and 15 can't be checked by a tool. See "KooSys: Show Rule Coverage" or
+`COVERAGE.md`. Where the source documents contradict each other, `GUIDELINE_DECISIONS.md` records
+what is enforced. A clean result does not mean the file is MISRA-compliant. ISO 26262 evidence still
 needs the project's qualified checker.
 
 ## What you see
-- Squiggles: red for Mandatory and Required rules, yellow for Advisory. Findings appear in the
-  Problems panel (`Ctrl+Shift+M`). Hover text gives the rule number, its category, and which engine found it.
-- Status bar: `KooSys: N issues · 46 rules not checked`. Click it to open the coverage report.
+- Squiggles:
+  - red for MISRA Mandatory and Required rules;
+  - yellow for MISRA Advisory rules and KooSys warnings (naming, types, documentation);
+  - blue Info hints for layout, comment style, function size and assertions.
+
+  Findings appear in the Problems panel (`Ctrl+Shift+M`). The hover gives the rule (`MISRA 15.1`,
+  `KSYS-NAME-02`) and which engine found it.
+- Status bar: `KooSys: N issues · 46 MISRA + 15 KooSys rules not checked`. It adds
+  `file only partly parsed` when Semgrep couldn't parse part of the file (often macros such as
+  `FUNC()`/`P2VAR()`); rules aren't checked in those parts. Click it to open the coverage report.
 - Output panel "KooSys C Checker": timing, engine errors, and Semgrep parse failures. A file that
   could not be parsed is reported here, never shown as clean.
 - Command palette: "KooSys: Check Current File".
@@ -53,6 +67,16 @@ Findings inside included headers are shown only when the header itself is checke
 | `koosys.disabledRules` | `[]` | Rule numbers not to report (project deviations) |
 | `koosys.wholeProgramRules` | `5.8 5.9 8.5 8.6 8.7` | Hidden in single-file checks, where they are wrong (8.7 would flag every public function) |
 | `koosys.ruleTextsFile` | — | Optional CSV `rule,text` with the guideline wording for hovers. Not bundled, because the text belongs to the company document. |
+| `koosys.formatting` | `true` | Layout rules: tabs, more than 78 columns, CRLF, 4-space indentation (Info). Turn off for legacy code. |
+| `koosys.maxLineLength` / `koosys.maxFunctionLines` | `78` / `60` | Limits for KSYS-FMT-02 and KSYS-FUNC-01 |
+| `koosys.minAssertions`, `koosys.assertionMacros` | `2`, `assert`, `Q_ASSERT`… | KSYS-FUNC-02. Set to `0` to disable. |
+| `koosys.requirementIdPattern` | — | Regex the doxygen comment of each function must contain, e.g. `SWRS-[A-Z]+-\\d+` |
+| `koosys.moduleAbbreviation` | — | Required prefix for globals in this project (KSYS-NAME-03) |
+| `koosys.checkDosFileNames` | `false` | DOS 8.3 file names (contradicts KooSys 4.1's own example) |
+
+Windows: with git's `core.autocrlf=true`, working copies get CRLF endings and KSYS-FMT-03 fires on
+every file. KooSys asks for LF, so set `core.autocrlf=input`, or turn the check off with
+`koosys.formatting: false`.
 
 ## Build
 ```

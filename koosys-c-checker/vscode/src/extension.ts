@@ -3,9 +3,10 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import {
-  Finding, NOT_CHECKED, RuleInfo, cppcheckArgs, describe, parseCppcheck, parseRuleCsv, parseRuleTexts,
-  parseSemgrep, selectFindings, semgrepArgs,
+  Finding, Level, NOT_CHECKED, RuleInfo, cppcheckArgs, describe, levelOf, parseCppcheck, parseKsysCatalogue,
+  parseRuleCsv, parseRuleTexts, parseSemgrep, selectFindings, semgrepArgs,
 } from "./engines";
+import { DEFAULT_TEXT_OPTIONS, TextCheckOptions, checkText } from "./textchecks";
 
 const C_FILE = /\.(c|h)$/i;
 
@@ -13,6 +14,7 @@ let diagnostics: vscode.DiagnosticCollection;
 let output: vscode.OutputChannel;
 let status: vscode.StatusBarItem;
 let rules = new Map<string, RuleInfo>();
+let ksysNotChecked = 0;
 const running = new Map<string, ChildProcess[]>(); // file -> engine processes of the current check
 
 /** Exposed for the integration test. */
@@ -27,6 +29,8 @@ export function activate(context: vscode.ExtensionContext): Api {
   status.command = "koosys.showCoverage";
   status.tooltip = "MISRA rules neither engine can check are listed in the coverage report";
   rules = parseRuleCsv(fs.readFileSync(context.asAbsolutePath("bundled/misra_rules.csv"), "utf8"));
+  const catalogue = parseKsysCatalogue(fs.readFileSync(context.asAbsolutePath("bundled/koosys_rules.csv"), "utf8"));
+  ksysNotChecked = (catalogue.get("not-checkable") ?? []).length;
 
   context.subscriptions.push(
     diagnostics, output, status,
@@ -91,6 +95,7 @@ async function check(context: vscode.ExtensionContext, doc: vscode.TextDocument)
   running.get(file)?.forEach((p) => p.kill()); // a newer save supersedes the running check
   const procs: ChildProcess[] = [];
   running.set(file, procs);
+  let parseTrouble = false;
   const cfg = config();
   const started = Date.now();
   status.text = "$(sync~spin) KooSys: checking…";
@@ -119,9 +124,11 @@ async function check(context: vscode.ExtensionContext, doc: vscode.TextDocument)
       }
       const parsed = parseSemgrep(r.stdout);
       parsed.errors.forEach((e) => output.appendLine(`semgrep: ${e}`)); // parse failures are shown, never silent
+      parseTrouble = parsed.errors.length > 0;
       return r.cancelled ? [] : parsed.findings;
     }));
   }
+  jobs.push(Promise.resolve(runTextChecks(file, doc.getText(), cfg)));
   const all = (await Promise.all(jobs)).flat();
   if (running.get(file) !== procs) {
     return -1; // superseded by a newer check
@@ -133,10 +140,41 @@ async function check(context: vscode.ExtensionContext, doc: vscode.TextDocument)
   const found = selectFindings(all, file, hidden);
   diagnostics.set(doc.uri, found.map((f) => toDiagnostic(f, texts)));
   const secs = ((Date.now() - started) / 1000).toFixed(1);
-  status.text = `KooSys: ${found.length} issue${found.length === 1 ? "" : "s"} · ${NOT_CHECKED.length} rules not checked`;
+  status.text = `KooSys: ${found.length} issue${found.length === 1 ? "" : "s"} · `
+    + `${NOT_CHECKED.length} MISRA + ${ksysNotChecked} KooSys rules not checked`
+    + (parseTrouble ? " · $(warning) file only partly parsed" : "");
+  status.tooltip = parseTrouble
+    ? "Semgrep could not parse parts of this file (often macros such as FUNC()/P2VAR()); rules in those parts were not checked. See the KooSys output panel."
+    : "MISRA rules neither engine can check are listed in the coverage report";
   output.appendLine(`${path.basename(file)}: ${found.length} findings in ${secs}s`);
   return found.length;
 }
+
+function runTextChecks(file: string, text: string, cfg: vscode.WorkspaceConfiguration): Finding[] {
+  const d = DEFAULT_TEXT_OPTIONS;
+  const opt: TextCheckOptions = {
+    formatting: cfg.get("formatting", d.formatting),
+    maxLineLength: cfg.get("maxLineLength", d.maxLineLength),
+    maxFunctionLines: cfg.get("maxFunctionLines", d.maxFunctionLines),
+    minAssertions: cfg.get("minAssertions", d.minAssertions),
+    assertionMacros: cfg.get("assertionMacros", d.assertionMacros),
+    requirementIdPattern: cfg.get("requirementIdPattern", d.requirementIdPattern),
+    moduleAbbreviation: cfg.get("moduleAbbreviation", d.moduleAbbreviation),
+    checkDosFileNames: cfg.get("checkDosFileNames", d.checkDosFileNames),
+  };
+  try {
+    return checkText(file, text, opt);
+  } catch (e) {
+    output.appendLine(`KooSys text checks failed on ${file}: ${(e as Error).message}`);
+    return [];
+  }
+}
+
+const SEVERITY: Record<Level, vscode.DiagnosticSeverity> = {
+  error: vscode.DiagnosticSeverity.Error,
+  warning: vscode.DiagnosticSeverity.Warning,
+  info: vscode.DiagnosticSeverity.Information,
+};
 
 function loadTexts(file: string, doc: vscode.TextDocument): Map<string, string> {
   if (!file) {
@@ -153,9 +191,8 @@ function loadTexts(file: string, doc: vscode.TextDocument): Map<string, string> 
 function toDiagnostic(f: Finding, texts: Map<string, string>): vscode.Diagnostic {
   const info = rules.get(f.rule);
   const range = new vscode.Range(f.line - 1, f.column - 1, f.endLine - 1, Math.max(f.endColumn - 1, f.column));
-  const severity = info?.category === "Advisory" ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error;
-  const d = new vscode.Diagnostic(range, describe(f, info, texts.get(f.rule)), severity);
+  const d = new vscode.Diagnostic(range, describe(f, info, texts.get(f.rule)), SEVERITY[levelOf(f, info)]);
   d.source = `KooSys (${f.engine})`;
-  d.code = `MISRA ${f.rule}`;
+  d.code = f.rule.startsWith("KSYS-") ? f.rule : `MISRA ${f.rule}`;
   return d;
 }

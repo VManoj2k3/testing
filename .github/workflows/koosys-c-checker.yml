@@ -48,20 +48,21 @@ jobs:
           echo "CPPCHECK=$PWD/$exe" >> "$GITHUB_ENV"
           "$PWD/$exe" --version
 
-      - name: Rule coverage (fails if fewer than 153 rules are detected)
-        run: |
-          python koosys-c-checker/tests/score.py --cppcheck "$CPPCHECK" --semgrep semgrep \
-            --min-detected 153 --md coverage-${{ runner.os }}.md
-      - name: Compliant code has no Semgrep findings
-        run: |
-          n=$(semgrep scan --json --quiet --metrics=off --disable-version-check \
-                --config koosys-c-checker/rules/semgrep koosys-c-checker/tests/clean/clean.c koosys-c-checker/tests/clean/clean.h \
-              | python -c "import sys,json; print(len(json.load(sys.stdin)['results']))")
-          echo "semgrep findings on clean code: $n"; test "$n" = 0
-
       - name: Extension unit tests
         working-directory: koosys-c-checker/vscode
         run: npm ci && npm run bundle-rules && npm test
+      - name: Rule coverage (MISRA >= 153, all 24 KooSys rules, 0 KooSys findings on compliant code)
+        run: |
+          python koosys-c-checker/tests/score.py --cppcheck "$CPPCHECK" --semgrep semgrep \
+            --min-detected 153 --md coverage-${{ runner.os }}.md \
+            --textchecks "node koosys-c-checker/vscode/out/cli.js" --min-ksys 24 --ksys-md koosys-${{ runner.os }}.md
+      - name: Compliant code has no Semgrep findings
+        run: |
+          n=$(semgrep scan --json --quiet --metrics=off --disable-version-check \
+                --config koosys-c-checker/rules/semgrep/misra_gaps.yaml koosys-c-checker/tests/clean/clean.c koosys-c-checker/tests/clean/clean.h \
+              | python -c "import sys,json; print(len(json.load(sys.stdin)['results']))")
+          echo "semgrep MISRA findings on clean code: $n"; test "$n" = 0
+
       - name: Extension end-to-end test in VS Code
         working-directory: koosys-c-checker/vscode
         env:
@@ -79,5 +80,6 @@ jobs:
           name: koosys-${{ runner.os }}
           path: |
             coverage-*.md
+            koosys-*.md
             koosys-c-checker/vscode/*.vsix
           if-no-files-found: ignore

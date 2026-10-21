@@ -1,0 +1,2 @@
+# Fixtures must keep their line endings on every OS (Windows autocrlf would turn them into CRLF)
+tests/** -text

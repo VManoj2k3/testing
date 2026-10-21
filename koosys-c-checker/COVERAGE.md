@@ -1,4 +1,4 @@
-# Rule coverage: KooSys MISRA list (200 rules) vs. the two engines
+# Rule coverage: KooSys MISRA list (200 rules) and KooSys coding guidelines
 
 Measured 2026-10-21 with cppcheck 2.22.0 (free MISRA addon + core checks, `--report-type=misra-c-2012`)
 and Semgrep CE 1.182.0 with `rules/semgrep/misra_gaps.yaml`. Regenerate with:
@@ -54,9 +54,44 @@ and Semgrep CE 1.182.0 with `rules/semgrep/misra_gaps.yaml`. Regenerate with:
 cancellation (not "<100 ms"), and only findings located in the checked file are shown.
 Without the project's include paths and config headers cppcheck stops at the first `#error`
 (seen on FreeRTOS), so include paths/defines are an extension setting.
-Semgrep reported no parse errors on these files.
+The MISRA gap rules are text (regex) rules, so they don't depend on Semgrep's C parser. The
+KooSys guideline rules do: on FreeRTOS, Semgrep **could not parse `tasks.c` at all** and parsed
+`croutine.c` and `timers.c` only partly, because of macros such as `PRIVILEGED_DATA static List_t …`.
+Expect the same on AUTOSAR code that uses `FUNC()` or `P2VAR()` macros. The extension shows
+"file only partly parsed" in the status bar when this happens.
 
-## Per-rule table
+## KooSys coding guidelines (KooSys v2.1, Quantum Leaps, AUTOSAR StandardTypes)
+
+The catalogue is `rules/koosys_rules.csv` (49 items). Contradictions and how they were resolved are in
+`GUIDELINE_DECISIONS.md`.
+
+| Status | Items |
+|---|---|
+| Checked by Semgrep or the built-in text checks | 25 (24 on by default; 8.3 file names off) |
+| Already covered by a MISRA rule (goto, single exit, braces, recursion, malloc, return values, pointer arithmetic, scope, explicit types) | 9 |
+| Not checkable (English comments, intent, error handling, ISO 26262 process…) | 15 |
+
+Fixtures (`tests/koosys/`): **all 24 enabled rules detected**, and **0 findings** on the compliant
+module `tests/koosys/clean/` (CI fails otherwise).
+
+FreeRTOS kernel (7 files, 17k lines; it follows its own style, so high counts are expected and are
+not false alarms). Text checks took 0.19 s for all 7 files, Semgrep 6.7 s.
+
+| Rule | Findings | Rule | Findings |
+|---|---|---|---|
+| FMT-02 line > 78 | 2518 | NAME-03 global prefix | 38 |
+| CMT-01 block comment | 948 | NAME-04 macro case | 38 |
+| NAME-01 variable case | 276 | NAME-06 length > 31 | 25 |
+| DOC-02 no doxygen | 275 | NAME-07 static without l_ | 24 |
+| FUNC-02 < 2 assertions | 275 | PTR-01 uninitialised pointer | 22 |
+| PRE-01 preprocessor | 151 | NAME-05 typedef case | 13 |
+| NAME-02 function case | 145 | DOC-01 header comment | 7 |
+| FUNC-01 > 60 lines | 64 | LOOP-01 unbounded loop | 4 |
+
+What this means for adoption: on existing code the layout and comment rules produce thousands of Info
+hints. Start with `koosys.formatting: false` on legacy modules, or with a clang-format pass.
+
+## Per-rule table (MISRA)
 | Rule | Category | Latest amendment | cppcheck | semgrep | Status |
 |---|---|---|---|---|---|
 | 1.1 | Required | yes | no fixture | no fixture | no fixture |

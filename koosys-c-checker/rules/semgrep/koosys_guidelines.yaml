@@ -1,0 +1,190 @@
+# KooSys coding guideline rules (KooSys_CodingGuidelines v2.1, Quantum Leaps C coding standard,
+# AUTOSAR SWS StandardTypes R21-11). Where the documents contradict each other, the decision taken
+# is recorded in GUIDELINE_DECISIONS.md. metadata.koosys = rule id, metadata.level = error|warning|info.
+# Semgrep sees one file before preprocessing; all rules here are syntactic. File-scope rules that
+# need exact brace scope (KSYS-NAME-03, KSYS-HDR-01) and text/layout rules live in vscode/src/textchecks.ts.
+rules:
+  # ---------------------------------------------------------------- naming (KooSys 4.3)
+  - id: ksys-name-01-variable-case
+    languages: [c]
+    severity: WARNING
+    message: "KSYS-NAME-01 (KooSys 4.3): variable '$X' must be lowercase with underscores (e.g. my_variable)."
+    metadata: {koosys: KSYS-NAME-01, level: warning}
+    patterns:
+      - pattern-inside: |
+          $R $F(...) { ... }
+      - pattern-either:
+          - pattern: $T $X;
+          - pattern: $T $X = $E;
+          - pattern: $T *$X;
+          - pattern: $T *$X = $E;
+      - metavariable-regex: {metavariable: $X, regex: '^(?![a-z][a-z0-9_]*$)'}
+      - focus-metavariable: $X
+
+  - id: ksys-name-02-function-case
+    languages: [c]
+    severity: WARNING
+    message: "KSYS-NAME-02 (KooSys 4.3): function '$F' must be Module_Function style (capitalised words joined by underscores)."
+    metadata: {koosys: KSYS-NAME-02, level: warning}
+    patterns:
+      - pattern: |
+          $R $F(...) { ... }
+      - metavariable-regex: {metavariable: $F, regex: '^(?!main$)(?![A-Z][A-Za-z0-9]*(_[A-Z][A-Za-z0-9]*)+$)'}
+      - focus-metavariable: $F
+
+  - id: ksys-name-04-macro-case
+    languages: [c]
+    severity: WARNING
+    message: "KSYS-NAME-04 (KooSys 4.3): constant and macro names must be UPPER_CASE with underscores."
+    metadata: {koosys: KSYS-NAME-04, level: warning}
+    pattern-either:
+      - pattern-regex: '(?m)^[ \t]*#[ \t]*define[ \t]+(?![A-Z][A-Z0-9_]*\b)[A-Za-z_]\w*'
+      # enumerators: flags the enum when any enumerator is not UPPER_CASE
+      - pattern-regex: '\benum\b[^{;]*\{[^}]*?(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]*[a-z])[A-Za-z_]\w*\s*[,=}]'
+
+  - id: ksys-name-05-typedef-case
+    languages: [c]
+    severity: WARNING
+    message: "KSYS-NAME-05 (KooSys 4.3): typedef '$N' must be lowercase with underscores and end in _t."
+    metadata: {koosys: KSYS-NAME-05, level: warning}
+    patterns:
+      - pattern-either:
+          - pattern: typedef $T $N;
+      - metavariable-regex: {metavariable: $N, regex: '^(?![a-z][a-z0-9_]*_t$)'}
+      - focus-metavariable: $N
+
+  - id: ksys-name-05-typedef-struct-case
+    languages: [c]
+    severity: WARNING
+    message: "KSYS-NAME-05 (KooSys 4.3): typedef name must be lowercase with underscores and end in _t."
+    metadata: {koosys: KSYS-NAME-05, level: warning}
+    # struct/enum/union typedef bodies are not expressible as a C pattern; match the closing name
+    pattern-regex: '\btypedef\s+(struct|enum|union)\b[^;]*?\}\s*(?![a-z][a-z0-9_]*_t\s*;)[A-Za-z_]\w*\s*;'
+
+  - id: ksys-name-06-identifier-length
+    languages: [c]
+    severity: WARNING
+    message: "KSYS-NAME-06 (KooSys 4.3): identifier longer than 31 characters."
+    metadata: {koosys: KSYS-NAME-06, level: warning}
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: $T $X;
+              - pattern: $T $X = $E;
+              - pattern: $T *$X;
+              - pattern: |
+                  $R $X(...) { ... }
+          - metavariable-regex: {metavariable: $X, regex: '^.{32,}$'}
+          - focus-metavariable: $X
+      - pattern-regex: '(?m)^[ \t]*#[ \t]*define[ \t]+\w{32,}'
+
+  - id: ksys-name-07-static-l-prefix
+    languages: [c]
+    severity: WARNING
+    message: "KSYS-NAME-07 (KooSys 4.3 / QL 5.2): module-local (file-scope static) variable '$X' must start with l_."
+    metadata: {koosys: KSYS-NAME-07, level: warning}
+    patterns:
+      - pattern-not-inside: |
+          $R $F(...) { ... }
+      - pattern-either:
+          - pattern: static $T $X;
+          - pattern: static $T $X = $E;
+      - metavariable-regex: {metavariable: $X, regex: '^(?!l_)'}
+      - focus-metavariable: $X
+
+  - id: ksys-name-08-reserved-name
+    languages: [c]
+    severity: WARNING
+    message: "KSYS-NAME-08 (QL 5.1): '$X' uses a reserved name (leading underscore, or a prefix the C standard reserves for external names)."
+    metadata: {koosys: KSYS-NAME-08, level: warning}
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: $T $X;
+              - pattern: $T $X = $E;
+              - pattern: |
+                  $R $X(...) { ... }
+          - metavariable-regex: {metavariable: $X, regex: '^_'}
+          - focus-metavariable: $X
+      - patterns:  # reserved library prefixes apply to external (file-scope) identifiers only
+          - pattern-not-inside: |
+              $R $F(...) { ... }
+          - pattern-either:
+              - pattern: $T $X;
+              - pattern: $T $X = $E;
+              - pattern: |
+                  $R $X(...) { ... }
+          - metavariable-regex:
+              metavariable: $X
+              regex: '^(E[0-9A-Z]|is[a-z]|to[a-z]|LC_|SIG[_A-Z]|str[a-z]|mem[a-z]|wcs[a-z])'
+          - focus-metavariable: $X
+
+  # ---------------------------------------------------------------- types
+  - id: ksys-type-01-raw-integer-type
+    languages: [c]
+    severity: WARNING
+    message: "KSYS-TYPE-01 (QL 4 / AUTOSAR SRS_BSW_00304): raw C integer type; use a fixed-width type (uint8_t... or AUTOSAR uint8...)."
+    metadata: {koosys: KSYS-TYPE-01, level: warning}
+    patterns:
+      - pattern-either:
+          - pattern: $T $X;
+          - pattern: $T $X = $E;
+          - pattern: $T *$X;
+          - pattern: $T *$X = $E;
+          - pattern: |
+              $T $X(...) { ... }
+      - pattern-not: |
+          int main(...) { ... }
+      - metavariable-regex:
+          metavariable: $T
+          regex: '^(const\s+|volatile\s+|static\s+|extern\s+)*(unsigned|signed|short|long|int)\b'
+      - focus-metavariable: $T
+
+  - id: ksys-type-02-std-return-literal
+    languages: [c]
+    severity: WARNING
+    message: "KSYS-TYPE-02 (AUTOSAR SWS_Std 8.2.1): Std_ReturnType functions return E_OK / E_NOT_OK, not numeric literals."
+    metadata: {koosys: KSYS-TYPE-02, level: warning}
+    patterns:
+      - pattern-inside: |
+          Std_ReturnType $F(...) { ... }
+      - pattern: return $N;
+      - metavariable-regex: {metavariable: $N, regex: '^[0-9]+[uU]?$'}
+
+  # ---------------------------------------------------------------- comments (KooSys 4.2)
+  - id: ksys-cmt-01-block-comment
+    languages: [c]
+    severity: INFO
+    message: "KSYS-CMT-01 (KooSys 4.2): use single-line // comments (doxygen /** */ blocks are allowed)."
+    metadata: {koosys: KSYS-CMT-01, level: info}
+    pattern-regex: '/\*(?![*!])'
+
+  # ---------------------------------------------------------------- pointers (KooSys 4.6)
+  - id: ksys-ptr-01-uninitialised-pointer
+    languages: [c]
+    severity: WARNING
+    message: "KSYS-PTR-01 (KooSys 4.6): initialise pointers to NULL when declared."
+    metadata: {koosys: KSYS-PTR-01, level: warning}
+    patterns:
+      - pattern-inside: |
+          $R $F(...) { ... }
+      - pattern: $T *$P;
+
+  # ---------------------------------------------------------------- preprocessor / loops (KooSys 5)
+  - id: ksys-pre-01-complex-preprocessor
+    languages: [c]
+    severity: INFO
+    message: "KSYS-PRE-01 (KooSys 5): limit the preprocessor to #include and simple macros (function-like macro or conditional compilation)."
+    metadata: {koosys: KSYS-PRE-01, level: info}
+    pattern-either:
+      - pattern-regex: '(?m)^[ \t]*#[ \t]*define[ \t]+\w+\('
+      - pattern-regex: '(?m)^[ \t]*#[ \t]*(if|ifdef|elif)\b'
+
+  - id: ksys-loop-01-unbounded-loop
+    languages: [c]
+    severity: INFO
+    message: "KSYS-LOOP-01 (KooSys 5): every loop must have a fixed upper limit."
+    metadata: {koosys: KSYS-LOOP-01, level: info}
+    pattern-either:
+      - pattern-regex: '\bfor\s*\(\s*;\s*;\s*\)'
+      - pattern-regex: '(?<!\}\s)\bwhile\s*\(\s*(1|1U|true|TRUE)\s*\)\s*\{'

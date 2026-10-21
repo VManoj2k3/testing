@@ -4,7 +4,7 @@ Each fixture line ending in `// EXPECT <rule>` must be flagged with that rule (w
 Findings for a rule on lines not marked with that rule are counted as "other" (fixtures
 violate other rules incidentally, so these need a human look before being called false alarms).
 
-Usage: python score.py [--cppcheck PATH] [--semgrep PATH] [--rules DIR] [--json OUT] [--md OUT]
+Usage: python score.py [--cppcheck PATH] [--semgrep PATH] [--rules DIR] [--json OUT] [--md OUT] [--min-detected N]
 """
 import argparse, csv, json, re, subprocess, sys
 from collections import defaultdict
@@ -78,6 +78,7 @@ def main():
     ap.add_argument("--rules", default=str(HERE.parent / "rules" / "semgrep"))
     ap.add_argument("--json")
     ap.add_argument("--md")
+    ap.add_argument("--min-detected", type=int, default=0, help="exit 1 if fewer rules are detected (CI regression gate)")
     a = ap.parse_args()
     exp = expectations()
     engines = {}
@@ -109,6 +110,8 @@ def main():
                          + " | ".join(t[n] for n in names) + f" | {t['status']} |")
         Path(a.md).write_text("\n".join(lines) + "\n")
     print(dict(totals), file=sys.stderr)
+    if totals["detected"] < a.min_detected:
+        sys.exit(f"coverage regression: {totals['detected']} rules detected, expected at least {a.min_detected}")
 
 
 if __name__ == "__main__":

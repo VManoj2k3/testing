@@ -1,0 +1,83 @@
+name: koosys-c-checker
+
+on:
+  push:
+    paths: ["koosys-c-checker/**", ".github/workflows/koosys-c-checker.yml"]
+  workflow_dispatch:
+
+env:
+  CPPCHECK_VERSION: "2.22.0"
+  PYTHONUTF8: "1"
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+
+      - name: Semgrep
+        run: python -m pip install --quiet semgrep && semgrep --version
+
+      - name: Cache cppcheck build
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: cppcheck
+          key: cppcheck-${{ env.CPPCHECK_VERSION }}-${{ runner.os }}
+      - name: Build cppcheck ${{ env.CPPCHECK_VERSION }}
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --quiet --depth 1 -b "$CPPCHECK_VERSION" https://github.com/danmar/cppcheck cppcheck
+          # FILESDIR = the source tree, so the binary finds addons/ (misra.py) and cfg/ on every OS
+          cmake -S cppcheck -B cppcheck/build -DCMAKE_BUILD_TYPE=Release -DUSE_MATCHCOMPILER=On -DFILESDIR="$PWD/cppcheck"
+          cmake --build cppcheck/build --config Release -j 4
+      - name: Locate cppcheck
+        run: |
+          exe=$(find cppcheck/build/bin -maxdepth 2 -type f \( -name cppcheck -o -name cppcheck.exe \) | head -1)
+          echo "CPPCHECK=$PWD/$exe" >> "$GITHUB_ENV"
+          "$PWD/$exe" --version
+
+      - name: Rule coverage (fails if fewer than 153 rules are detected)
+        run: |
+          python koosys-c-checker/tests/score.py --cppcheck "$CPPCHECK" --semgrep semgrep \
+            --min-detected 153 --md coverage-${{ runner.os }}.md
+      - name: Compliant code has no Semgrep findings
+        run: |
+          n=$(semgrep scan --json --quiet --metrics=off --disable-version-check \
+                --config koosys-c-checker/rules/semgrep koosys-c-checker/tests/clean/clean.c koosys-c-checker/tests/clean/clean.h \
+              | python -c "import sys,json; print(len(json.load(sys.stdin)['results']))")
+          echo "semgrep findings on clean code: $n"; test "$n" = 0
+
+      - name: Extension unit tests
+        working-directory: koosys-c-checker/vscode
+        run: npm ci && npm run bundle-rules && npm test
+      - name: Extension end-to-end test in VS Code
+        working-directory: koosys-c-checker/vscode
+        env:
+          KOOSYS_CPPCHECK: ${{ env.CPPCHECK }}
+          KOOSYS_SEMGREP: semgrep
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a node out/test/runVscode.js; else node out/test/runVscode.js; fi
+      - name: Package .vsix
+        if: runner.os == 'Linux'
+        working-directory: koosys-c-checker/vscode
+        run: npm run package
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: koosys-${{ runner.os }}
+          path: |
+            coverage-*.md
+            koosys-c-checker/vscode/*.vsix
+          if-no-files-found: ignore

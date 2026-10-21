@@ -1,0 +1,188 @@
+# MISRA C:2012 (Amd 2-4) rules that cppcheck's free MISRA addon does not detect (measured in COVERAGE.md).
+# Semgrep CE sees one file before preprocessing and has no type information, so every rule here is
+# syntactic. Messages paraphrase the rule; the authoritative wording is in KooSys_MisraRules.pdf.
+rules:
+  - id: misra-1.2-language-extension
+    languages: [c]
+    severity: INFO
+    message: "MISRA 1.2 (Advisory): compiler language extension used."
+    metadata: {misra: "1.2", category: Advisory}
+    pattern-regex: '(__attribute__\s*\(\(|\b__asm__\b|\basm\s*\(|\(\{|\btypeof\s*\()'
+
+  - id: misra-3.2-line-splice-in-comment
+    languages: [c]
+    severity: WARNING
+    message: "MISRA 3.2 (Required): line splicing (backslash at end of line) inside a // comment."
+    metadata: {misra: "3.2", category: Required}
+    pattern-regex: '//[^\n]*\\\r?\n'
+
+  - id: misra-7.5-int-constant-macro-form
+    languages: [c]
+    severity: ERROR
+    message: "MISRA 7.5 (Mandatory): argument of an integer constant macro must be an unsuffixed integer literal."
+    metadata: {misra: "7.5", category: Mandatory}
+    pattern-regex: '\bU?INT(8|16|32|64|MAX)_C\s*\(\s*(?![0-9]+\s*\))[^)]*\)'
+
+  - id: misra-7.6-small-int-constant-macro
+    languages: [c]
+    severity: WARNING
+    message: "MISRA 7.6 (Required): small integer variants of the minimum-width integer constant macros (INT8_C/UINT8_C/INT16_C/UINT16_C) shall not be used."
+    metadata: {misra: "7.6", category: Required}
+    pattern-regex: '\bU?INT(8|16)_C\s*\('
+
+  - id: misra-8.1-implicit-int
+    languages: [c]
+    severity: WARNING
+    message: "MISRA 8.1 (Required): type not explicitly specified (implicit int)."
+    metadata: {misra: "8.1", category: Required}
+    pattern-regex: '(?m)^\s*(static|extern|const|volatile|register)(\s+(static|extern|const|volatile|register))*\s+[A-Za-z_]\w*\s*(=[^;]*)?;'
+
+  - id: misra-8.16-alignment-zero
+    languages: [c]
+    severity: INFO
+    message: "MISRA 8.16 (Advisory): alignment specification of zero."
+    metadata: {misra: "8.16", category: Advisory}
+    pattern-regex: '\b(_Alignas|alignas)\s*\(\s*0\s*\)'
+
+  - id: misra-8.17-multiple-alignment
+    languages: [c]
+    severity: INFO
+    message: "MISRA 8.17 (Advisory): more than one explicit alignment specifier in a declaration."
+    metadata: {misra: "8.17", category: Advisory}
+    pattern-regex: '\b(_Alignas|alignas)\s*\([^)]*\)[^;{]*\b(_Alignas|alignas)\s*\('
+
+  - id: misra-11.10-atomic-void
+    languages: [c]
+    severity: WARNING
+    message: "MISRA 11.10 (Required): _Atomic shall not be applied to the incomplete type void."
+    metadata: {misra: "11.10", category: Required}
+    pattern-regex: '\b_Atomic\s+(const\s+|volatile\s+)*void\b|\b_Atomic\s*\(\s*void\s*\)'
+
+  - id: misra-17.1-stdarg
+    languages: [c]
+    severity: WARNING
+    message: "MISRA 17.1 (Required): <stdarg.h> shall not be used."
+    metadata: {misra: "17.1", category: Required}
+    pattern-either:
+      - pattern-regex: '#\s*include\s*<stdarg\.h>'
+      - pattern: va_start(...)
+      - pattern: va_arg(...)
+
+  - id: misra-17.10-noreturn-nonvoid
+    languages: [c]
+    severity: WARNING
+    message: "MISRA 17.10 (Required): a _Noreturn function shall have void return type."
+    metadata: {misra: "17.10", category: Required}
+    pattern-regex: '\b(_Noreturn|noreturn)\s+(static\s+|inline\s+|extern\s+)*(?!void\b)[A-Za-z_]\w*\s+\**\s*[A-Za-z_]\w*\s*\('
+
+  - id: misra-18.10-pointer-to-vla
+    languages: [c]
+    severity: ERROR
+    message: "MISRA 18.10 (Mandatory): pointer to a variably-modified array type."
+    metadata: {misra: "18.10", category: Mandatory}
+    pattern-regex: '\(\s*\*\s*[A-Za-z_]\w*\s*\)\s*\[\s*[a-z_]\w*\s*\]'
+
+  - id: misra-21.12-fenv
+    languages: [c]
+    severity: WARNING
+    message: "MISRA 21.12 (Required): <fenv.h> shall not be used."
+    metadata: {misra: "21.12", category: Required}
+    pattern-regex: '#\s*include\s*<fenv\.h>'
+
+  - id: misra-21.14-memcmp-string
+    languages: [c]
+    severity: WARNING
+    message: "MISRA 21.14 (Required): memcmp used to compare null-terminated strings (use strcmp/strncmp)."
+    metadata: {misra: "21.14", category: Required}
+    pattern-either:
+      - pattern: memcmp($A, "...", $N)
+      - pattern: memcmp("...", $B, $N)
+      - pattern: memcmp((const char *) $A, $B, $N)
+      - pattern: memcmp($A, (const char *) $B, $N)
+      - pattern: memcmp((char *) $A, $B, $N)
+      - pattern: memcmp($A, (char *) $B, $N)
+
+  - id: misra-21.24-rand
+    languages: [c]
+    severity: WARNING
+    message: "MISRA 21.24 (Required): random number functions of <stdlib.h> (rand/srand) shall not be used."
+    metadata: {misra: "21.24", category: Required}
+    pattern-either:
+      - pattern: rand()
+      - pattern: srand(...)
+
+  - id: misra-21.25-memory-order
+    languages: [c]
+    severity: WARNING
+    message: "MISRA 21.25 (Required): memory synchronization operations shall be sequentially consistent (memory_order_seq_cst)."
+    metadata: {misra: "21.25", category: Required}
+    pattern-regex: '\bmemory_order_(relaxed|consume|acquire|release|acq_rel)\b'
+
+  - id: misra-22.11-double-join
+    languages: [c]
+    severity: WARNING
+    message: "MISRA 22.11 (Required): thread already joined or detached is joined or detached again."
+    metadata: {misra: "22.11", category: Required}
+    patterns:
+      - pattern-either:
+          - pattern: |
+              thrd_join($T, ...);
+              ...
+              $SECOND;
+          - pattern: |
+              thrd_detach($T);
+              ...
+              $SECOND;
+      - metavariable-pattern:
+          metavariable: $SECOND
+          pattern-either:
+            - pattern: thrd_join($T, ...)
+            - pattern: thrd_detach($T)
+      - focus-metavariable: $SECOND
+
+  - id: misra-22.18-recursive-lock
+    languages: [c]
+    severity: WARNING
+    message: "MISRA 22.18 (Required): mutex locked again without being unlocked (non-recursive mutexes shall not be recursively locked)."
+    metadata: {misra: "22.18", category: Required}
+    patterns:
+      - pattern: |
+          mtx_lock($M);
+          ...
+          $SECOND;
+      - metavariable-pattern: {metavariable: $SECOND, pattern: mtx_lock($M)}
+      - pattern-not: |
+          mtx_lock($M);
+          ...
+          mtx_unlock($M);
+          ...
+          $SECOND;
+      - focus-metavariable: $SECOND
+
+  - id: misra-23.1-generic-outside-macro
+    languages: [c]
+    severity: INFO
+    message: "MISRA 23.1 (Advisory): a generic selection should only be expanded from a macro."
+    metadata: {misra: "23.1", category: Advisory}
+    pattern-regex: '(?m)^(?![ \t]*#)[^\n]*\b_Generic\s*\('
+
+  - id: misra-23.2-generic-side-effect
+    languages: [c]
+    severity: WARNING
+    message: "MISRA 23.2 (Required): controlling expression of a generic selection not from a macro has side effects."
+    metadata: {misra: "23.2", category: Required}
+    pattern-regex: '(?m)^(?![ \t]*#)[^\n]*\b_Generic\s*\(\s*([^,\n]*(\+\+|--|[^=!<>]=[^=])[^,\n]*|[A-Za-z_]\w*\s*\([^,\n]*)\s*,'
+
+  - id: misra-23.3-generic-only-default
+    languages: [c]
+    severity: INFO
+    message: "MISRA 23.3 (Advisory): a generic selection should contain at least one non-default association."
+    metadata: {misra: "23.3", category: Advisory}
+    pattern-regex: '\b_Generic\s*\([^,\n]*,\s*default\s*:[^,)\n]*\)'
+
+  - id: misra-23.8-generic-default-position
+    languages: [c]
+    severity: WARNING
+    message: "MISRA 23.8 (Required): default association shall be first or last in a generic selection."
+    metadata: {misra: "23.8", category: Required}
+    pattern-regex: '\b_Generic\s*\([^,\n]*(,[^,:\n]*:[^,\n]*)+,\s*default\s*:[^,\n]*,[^)\n]*\)'
